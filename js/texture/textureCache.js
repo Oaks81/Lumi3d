@@ -5,7 +5,8 @@ import { TextureAtlasKey } from '../world/textureAtlasKey.js';
 import { DataTextureConfig, DEFAULT_ATLAS_CONFIG } from '../world/dataTextureConfiguration.js';
 
 export class TextureCache {
-    constructor(maxSizeBytes = 1024 * 1024 * 1024) {
+    // Default to 2GB cache - each atlas is ~326MB with optimized settings
+    constructor(maxSizeBytes = 2 * 1024 * 1024 * 1024) {
         this.cache = new Map();
         this.maxSizeBytes = maxSizeBytes;
         this.currentSizeBytes = 0;
@@ -86,6 +87,18 @@ export class TextureCache {
      */
     set(chunkXOrAtlasKey, chunkY, type, texture, sizeBytes) {
         const key = this.makeKey(chunkXOrAtlasKey, chunkY, type);
+        
+        // Warn if adding very large texture
+        if (sizeBytes > 100 * 1024 * 1024) {
+            console.warn('[TextureCache] Large texture being cached: ' + key + ' (' + (sizeBytes / 1024 / 1024).toFixed(2) + ' MB)');
+        }
+        
+        // Check if this single texture exceeds budget
+        if (sizeBytes > this.maxSizeBytes * 0.5) {
+            console.error('[TextureCache] WARNING: Single texture uses more than 50% of cache budget!');
+            console.error('[TextureCache]   Texture: ' + key + ' (' + (sizeBytes / 1024 / 1024).toFixed(2) + ' MB)');
+            console.error('[TextureCache]   Budget: ' + (this.maxSizeBytes / 1024 / 1024).toFixed(2) + ' MB');
+        }
         
         // Determine if this is an atlas key
         const isAtlas = chunkXOrAtlasKey instanceof TextureAtlasKey;

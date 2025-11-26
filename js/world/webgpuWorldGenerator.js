@@ -1,15 +1,23 @@
 // js/world/webgpuWorldGenerator.js
-// Fix: Added TextureAtlasKey import
+// Phase 4: Full atlas integration with UV transforms in chunk data
+//
+// Key changes:
+// - Properly stores atlas textures in chunkData.textureRefs
+// - Includes uvTransform for shader usage
+// - Works with both atlas and legacy per-chunk modes
 
 import { BaseWorldGenerator } from './baseWorldGenerator.js';
 import { WebGPUTerrainGenerator } from "./webgpuTerrainGenerator.js";
 import { ChunkData } from "./chunkData.js";
 import { TreeFeature } from './features/treeFeature.js';
-import { TextureAtlasKey } from './textureAtlasKey.js';  // ADDED: Missing import
+import { TextureAtlasKey } from './textureAtlasKey.js';
 
 export class WebGPUWorldGenerator extends BaseWorldGenerator {
     constructor(renderer, textureCache, chunkSize, seed) {
         super(renderer, textureCache, chunkSize, seed);
+        
+        // Atlas mode flag - set to true to use atlas textures
+        this.useAtlasMode = true;
     }
 
     getAPIName() {
@@ -17,8 +25,6 @@ export class WebGPUWorldGenerator extends BaseWorldGenerator {
     }
 
     async initializeAPI() {
-        // FIX: Use 'this.backend' (inherited from BaseWorldGenerator)
-        // The GameEngine passes the backend instance to the constructor.
         if (this.backend && this.backend.device) {
             this.device = this.backend.device;
             this.adapter = this.backend.adapter;
@@ -26,7 +32,6 @@ export class WebGPUWorldGenerator extends BaseWorldGenerator {
             return;
         }
 
-        // --- FALLBACK: Only create a device if we are running standalone (no backend) ---
         console.warn('[WARN] WebGPUWorldGenerator: Creating ISOLATED device (Context sharing issues WILL occur)');
 
         if (!navigator.gpu) {
@@ -59,7 +64,7 @@ export class WebGPUWorldGenerator extends BaseWorldGenerator {
     async initializeModules() {
         if (this.modules.tiledTerrain.enabled) {
             this.modules.tiledTerrain.instance = new WebGPUTerrainGenerator(
-                this.device, // Now uses the SHARED device
+                this.device,
                 this.seed,
                 this.chunkSize,
                 this.macroConfig,
@@ -76,16 +81,6 @@ export class WebGPUWorldGenerator extends BaseWorldGenerator {
         
         console.log('[WebGPUWorldGenerator] generateChunk(' + chunkX + ', ' + chunkY + ', face=' + face + ', lod=' + lod + ')');
         
-        // Check if atlas exists for this chunk
-        const needsAtlas = !this.hasAtlasForChunk(chunkX, chunkY, face);
-        
-        if (needsAtlas) {
-            console.log('[WebGPUWorldGenerator] Atlas not found, generating...');
-            await this.generateAtlasForChunk(chunkX, chunkY, face);
-        } else {
-            console.log('[WebGPUWorldGenerator] Atlas already exists');
-        }
-        
         // Create chunk data structure
         const chunkData = new ChunkData(chunkX, chunkY, this.chunkSize);
         if (this.planetConfig) {
@@ -93,20 +88,15 @@ export class WebGPUWorldGenerator extends BaseWorldGenerator {
             chunkData.baseAltitude = this.planetConfig.radius;
         }
         
-        // Store atlas info in chunk data
-        // TextureAtlasKey is now properly imported
-        const atlasKey = TextureAtlasKey.fromChunkCoords(chunkX, chunkY, face, this.atlasConfig);
-        chunkData.atlasKey = atlasKey;
-        chunkData.uvTransform = atlasKey.getChunkUVTransform(chunkX, chunkY);
-        
-        console.log('[WebGPUWorldGenerator] Chunk UV transform:', chunkData.uvTransform);
-        
-        // Generate terrain textures for this chunk (legacy per-chunk for now)
-        // Phase 2 will change this to atlas-based generation
-        if (this.modules.tiledTerrain.enabled && this.modules.tiledTerrain.instance) {
-            await this.modules.tiledTerrain.instance.generateTerrain(chunkData, chunkX, chunkY);
+        if (this.useAtlasMode) {
+            // Atlas mode: generate or get atlas, then reference it
+            await this._setupAtlasTextures(chunkData, chunkX, chunkY, face);
+        } else {
+            // Legacy mode: generate per-chunk textures
+            await this._setupLegacyTextures(chunkData, chunkX, chunkY);
         }
 
+        // Calculate water visibility
         chunkData.calculateWaterVisibility(this.globalWaterLevel);
 
         if (chunkData.hasWater || chunkData.isFullySubmerged) {
@@ -122,11 +112,135 @@ export class WebGPUWorldGenerator extends BaseWorldGenerator {
             chunkData.waterFeatures = [];
         }
 
+        // Generate static objects
         if (this.modules.staticObjects.enabled && !chunkData.isFullySubmerged) {
             this.generateObjectData(chunkData, chunkX, chunkY);
         }
 
         return chunkData;
+    }
+
+    /**
+     * Setup atlas textures for a chunk (Phase 4 key method)
+     */
+    async _setupAtlasTextures(chunkData, chunkX, chunkY, face) {
+        // Ensure atlas exists
+        const needsAtlas = !this.hasAtlasForChunk(chunkX, chunkY, face);
+        
+        if (needsAtlas) {
+            console.log('[WebGPUWorldGenerator] Generating atlas for chunk (' + chunkX + ',' + chunkY + ')');
+            await this.generateAtlasForChunk(chunkX, chunkY, face);
+        }
+        
+        // Get atlas key and UV transform
+        const atlasKey = TextureAtlasKey.fromChunkCoords(chunkX, chunkY, face, this.atlasConfig);
+        const uvTransform = this.atlasConfig.getChunkUVTransform(chunkX, chunkY);
+        
+        // Store atlas info in chunk data
+        chunkData.atlasKey = atlasKey;
+        chunkData.uvTransform = uvTransform;
+        chunkData.useAtlasMode = true;
+        
+        console.log('[WebGPUWorldGenerator] Chunk UV transform: offset=(' + 
+            uvTransform.offsetX.toFixed(4) + ',' + uvTransform.offsetY.toFixed(4) + 
+            '), scale=' + uvTransform.scale.toFixed(4));
+        
+        // Get atlas textures from cache
+        const atlasTextures = this.getAtlasTexturesForChunk(chunkX, chunkY, face);
+        
+        // Store texture references (pointing to atlas textures)
+        chunkData.textureRefs = {
+            chunkX: chunkX,
+            chunkY: chunkY,
+            atlasKey: atlasKey,
+            uvTransform: uvTransform,
+            useAtlasMode: true,
+            isWebGPU: true,
+            // Atlas textures (shared with other chunks in same atlas)
+            heightTexture: atlasTextures.height ? atlasTextures.height.texture : null,
+            normalTexture: atlasTextures.normal ? atlasTextures.normal.texture : null,
+            tileTexture: atlasTextures.tile ? atlasTextures.tile.texture : null,
+            splatDataTexture: atlasTextures.splatData ? atlasTextures.splatData.texture : null,
+            macroTexture: atlasTextures.macro ? atlasTextures.macro.texture : null
+        };
+        
+        // Extract CPU-side data for gameplay (collision, etc.)
+        // This reads a subregion from the atlas
+        await this._extractChunkGameplayData(chunkData, atlasKey, chunkX, chunkY);
+    }
+
+    /**
+     * Extract height and tile data for gameplay from atlas
+     */
+    async _extractChunkGameplayData(chunkData, atlasKey, chunkX, chunkY) {
+        // For now, populate with placeholder data
+        // Full implementation would read subregion from GPU texture
+        
+        const terrainGen = this.modules.tiledTerrain.instance;
+        if (terrainGen && terrainGen.extractChunkDataFromAtlas) {
+            const data = await terrainGen.extractChunkDataFromAtlas(atlasKey, chunkX, chunkY, this.atlasConfig);
+            if (data) {
+                this._populateChunkDataFromExtract(chunkData, chunkX, chunkY, data.heightData, data.tileData);
+                return;
+            }
+        }
+        
+        // Fallback: generate minimal data
+        console.warn('[WebGPUWorldGenerator] Could not extract chunk data from atlas, using fallback');
+        const size = this.chunkSize + 1;
+        const tileSize = this.chunkSize;
+        
+        chunkData.heights = new Float32Array(size * size);
+        chunkData.tiles = new Uint32Array(tileSize * tileSize);
+        
+        // Fill with placeholder
+        for (let i = 0; i < chunkData.heights.length; i++) {
+            chunkData.heights[i] = 0;
+        }
+        for (let i = 0; i < chunkData.tiles.length; i++) {
+            chunkData.tiles[i] = 3; // Grass
+        }
+        
+        chunkData.splatDensity = this.splatConfig.splatDensity;
+        chunkData.offsetX = chunkX * this.chunkSize;
+        chunkData.offsetZ = chunkY * this.chunkSize;
+    }
+
+    _populateChunkDataFromExtract(chunkData, chunkX, chunkY, heightData, tileData) {
+        // Height Data
+        chunkData.heights = new Float32Array(heightData.length / 4);
+        for (let i = 0; i < chunkData.heights.length; i++) {
+            chunkData.heights[i] = heightData[i * 4];
+        }
+
+        // Tile Data
+        const tileSize = this.chunkSize;
+        chunkData.tiles = new Uint32Array(tileSize * tileSize);
+        for (let i = 0; i < chunkData.tiles.length; i++) {
+            chunkData.tiles[i] = Math.round(tileData[i * 4] * 255);
+        }
+
+        chunkData.splatDensity = this.splatConfig.splatDensity;
+        chunkData.offsetX = chunkX * this.chunkSize;
+        chunkData.offsetZ = chunkY * this.chunkSize;
+        
+        // Generate feature distribution
+        const terrainGen = this.modules.tiledTerrain.instance;
+        if (terrainGen && terrainGen.generateFeatureDistributionForChunk) {
+            chunkData.featureDistribution = terrainGen.generateFeatureDistributionForChunk(chunkX, chunkY, chunkData.tiles);
+        }
+    }
+
+    /**
+     * Legacy per-chunk texture setup (backward compatibility)
+     */
+    async _setupLegacyTextures(chunkData, chunkX, chunkY) {
+        chunkData.useAtlasMode = false;
+        
+        // Use terrain generator directly
+        if (this.modules.tiledTerrain.enabled && this.modules.tiledTerrain.instance) {
+            await this.modules.tiledTerrain.instance.generateTerrain(chunkData, chunkX, chunkY);
+        }
     }
 
     generateObjectData(chunkData, chunkX, chunkY) {

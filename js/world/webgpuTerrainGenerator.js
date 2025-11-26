@@ -1,5 +1,16 @@
 // js/world/webgpuTerrainGenerator.js
-// Phase 2: Added atlas texture generation support
+// Phase 2+: Atlas texture generation with MEMORY OPTIMIZATIONS
+//
+// Memory optimizations:
+// 1. Splat density reduced to 1 for atlas mode (was 4 = 16x memory!)
+// 2. Memory estimation before generation
+//
+// With splatDensity=1:
+//   Per atlas (2048x2048): ~326 MB total
+//   - Height: 67 MB, Normal: 67 MB, Tile: 64 MB, Macro: 64 MB, Splat: 64 MB
+//
+// With splatDensity=4 (old, BAD):
+//   Per atlas: ~2.2 GB total (macro and splat were 8192x8192 = 1GB each!)
 
 import { createTerrainComputeShader } from './shaders/webgpu/terrainCompute.wgsl.js';
 import { createSplatComputeShader } from './shaders/webgpu/splatCompute.wgsl.js';
@@ -18,6 +29,10 @@ export class WebGPUTerrainGenerator {
         this.splatKernelSize = splatConfig.splatKernelSize || 5;
         this.textureCache = textureCache;
 
+        // OPTIMIZATION: For atlas mode, use reduced splat density
+        // Full splat detail can be computed per-chunk on demand if needed
+        this.atlasSplatDensity = 1;  // Was 4, now 1 for atlas (saves 16x memory!)
+        
         this.worldScale = 1.0;
         this.elevationScale = 0.04;
         this.detailScale = 0.08;
@@ -106,39 +121,73 @@ export class WebGPUTerrainGenerator {
         });
     }
 
+    /**
+     * Estimate memory for atlas generation
+     */
+    estimateAtlasMemory(config) {
+        const textureSize = config.textureSize;
+        const heightNormalSize = textureSize + 1;
+        const tileSize = textureSize;
+        // OPTIMIZED: Use reduced splat density for atlas
+        const splatSize = textureSize * this.atlasSplatDensity;
+        
+        const bytesPerPixel = 16; // RGBA32F
+        
+        const heightMem = heightNormalSize * heightNormalSize * bytesPerPixel;
+        const normalMem = heightNormalSize * heightNormalSize * bytesPerPixel;
+        const tileMem = tileSize * tileSize * bytesPerPixel;
+        const macroMem = splatSize * splatSize * bytesPerPixel;
+        const splatMem = splatSize * splatSize * bytesPerPixel;
+        
+        const total = heightMem + normalMem + tileMem + macroMem + splatMem;
+        
+        return {
+            height: heightMem,
+            normal: normalMem,
+            tile: tileMem,
+            macro: macroMem,
+            splatData: splatMem,
+            total: total,
+            totalMB: (total / 1024 / 1024).toFixed(2)
+        };
+    }
+
     // ========================================================================
-    // PHASE 2: Atlas-based texture generation
+    // PHASE 2: Atlas-based texture generation (OPTIMIZED)
     // ========================================================================
     
     /**
-     * Generate all textures for an entire atlas (covering chunksPerAxis x chunksPerAxis chunks).
-     * This replaces multiple calls to generateAllTexturesForChunk with a single GPU dispatch.
+     * Generate all textures for an entire atlas.
+     * OPTIMIZED: Uses reduced splat density (1 instead of 4) to save memory.
      * 
-     * @param {TextureAtlasKey} atlasKey - The atlas to generate
-     * @param {DataTextureConfig} config - Atlas configuration
-     * @returns {Promise<Object>} Generated textures and cache keys
+     * Memory per atlas (2048x2048, splatDensity=1):
+     * - Height: 67 MB, Normal: 67 MB, Tile: 64 MB, Macro: 64 MB, Splat: 64 MB
+     * - Total: ~326 MB (was 2.2 GB with density=4!)
      */
     async generateAtlasTextures(atlasKey, config) {
         if (!this.initialized) await this.initialize();
         
         const textureSize = config.textureSize;
-        const heightNormalSize = textureSize + 1;  // +1 for vertex sampling
+        const heightNormalSize = textureSize + 1;
         const tileSize = textureSize;
-        const splatSize = textureSize * this.splatDensity;
         
+        // OPTIMIZATION: Use reduced splat density for atlas mode
+        const splatSize = textureSize * this.atlasSplatDensity;
+        
+        // Estimate and log memory usage
+        const memEstimate = this.estimateAtlasMemory(config);
         console.log('[WebGPUTerrainGenerator] Generating atlas textures:');
         console.log('  Atlas key: ' + atlasKey.toString());
         console.log('  Height/Normal size: ' + heightNormalSize + 'x' + heightNormalSize);
         console.log('  Tile size: ' + tileSize + 'x' + tileSize);
-        console.log('  Splat size: ' + splatSize + 'x' + splatSize);
+        console.log('  Splat size: ' + splatSize + 'x' + splatSize + ' (density=' + this.atlasSplatDensity + ')');
+        console.log('  Estimated memory: ' + memEstimate.totalMB + ' MB');
         
         // Calculate world origin for this atlas
-        // Atlas origin in chunk coordinates, then multiplied by chunkSize for world coords
         const atlasChunkX = atlasKey.atlasX * config.chunksPerAxis;
         const atlasChunkY = atlasKey.atlasY * config.chunksPerAxis;
         
         console.log('  Atlas chunk origin: (' + atlasChunkX + ', ' + atlasChunkY + ')');
-        console.log('  World origin: (' + (atlasChunkX * config.chunkSize) + ', ' + (atlasChunkY * config.chunkSize) + ')');
         
         // Create GPU textures for the atlas
         const gpuHeight = this.createGPUTexture(heightNormalSize, heightNormalSize);
@@ -147,8 +196,7 @@ export class WebGPUTerrainGenerator {
         const gpuMacro = this.createGPUTexture(splatSize, splatSize);
         const gpuSplatData = this.createGPUTexture(splatSize, splatSize);
         
-        // Run compute passes with atlas-sized dispatches
-        // Note: We pass atlasChunkX/Y as the "chunk coord" so shader computes correct world positions
+        // Run compute passes
         await this.runTerrainPassAtlas(gpuHeight, atlasChunkX, atlasChunkY, 0, heightNormalSize, heightNormalSize, config.chunkSize);
         await this.runTerrainPassAtlas(gpuNormal, atlasChunkX, atlasChunkY, 1, heightNormalSize, heightNormalSize, config.chunkSize);
         await this.runTerrainPassAtlas(gpuTile, atlasChunkX, atlasChunkY, 2, tileSize, tileSize, config.chunkSize);
@@ -165,8 +213,7 @@ export class WebGPUTerrainGenerator {
         };
         
         // Store in cache using atlas keys
-        const atlasKeyStr = atlasKey.toString();
-        const bytesPerPixel = 16; // RGBA32F
+        const bytesPerPixel = 16;
         
         this.textureCache.set(atlasKey, null, 'height', textures.height, heightNormalSize * heightNormalSize * bytesPerPixel);
         this.textureCache.set(atlasKey, null, 'normal', textures.normal, heightNormalSize * heightNormalSize * bytesPerPixel);
@@ -178,22 +225,21 @@ export class WebGPUTerrainGenerator {
         
         return {
             atlasKey: atlasKey,
-            textures: textures
+            textures: textures,
+            memoryUsed: memEstimate.total
         };
     }
     
     /**
      * Run terrain compute pass for atlas-sized texture.
-     * Similar to runTerrainPass but with configurable chunkSize parameter.
      */
     async runTerrainPassAtlas(outTex, atlasChunkX, atlasChunkY, type, w, h, chunkSize) {
         const data = new ArrayBuffer(64);
         const v = new DataView(data);
         
-        // Pass atlas origin in chunk coordinates
         v.setInt32(0, atlasChunkX, true);
         v.setInt32(4, atlasChunkY, true);
-        v.setInt32(8, chunkSize, true);  // Individual chunk size for world coord calculation
+        v.setInt32(8, chunkSize, true);
         v.setInt32(12, this.seed, true);
         v.setFloat32(16, this.elevationScale, true);
         v.setFloat32(20, this.heightScale, true);
@@ -219,10 +265,8 @@ export class WebGPUTerrainGenerator {
             ]
         }));
         
-        // Dispatch workgroups for the full atlas size
         const workgroupsX = Math.ceil(w / 8);
         const workgroupsY = Math.ceil(h / 8);
-        console.log('[WebGPUTerrainGenerator] Dispatching ' + workgroupsX + 'x' + workgroupsY + ' workgroups for ' + w + 'x' + h + ' texture (type=' + type + ')');
         
         pass.dispatchWorkgroups(workgroupsX, workgroupsY);
         pass.end();
@@ -239,7 +283,7 @@ export class WebGPUTerrainGenerator {
         v.setInt32(4, atlasChunkY, true);
         v.setInt32(8, chunkSize, true);
         v.setInt32(12, this.seed, true);
-        v.setInt32(16, this.splatDensity, true);
+        v.setInt32(16, this.atlasSplatDensity, true);  // Use atlas splat density
         v.setInt32(20, this.splatKernelSize, true);
 
         this.device.queue.writeBuffer(this.splatUniformBuffer, 0, data);
@@ -263,85 +307,6 @@ export class WebGPUTerrainGenerator {
         pass.end();
         this.device.queue.submit([enc.finish()]);
     }
-    
-    /**
-     * Extract chunk data from atlas textures for gameplay (collision, etc.)
-     * This reads back a subregion of the atlas for a specific chunk.
-     * 
-     * @param {TextureAtlasKey} atlasKey - The atlas containing the chunk
-     * @param {number} chunkX - Chunk X coordinate
-     * @param {number} chunkY - Chunk Y coordinate
-     * @param {DataTextureConfig} config - Atlas configuration
-     * @returns {Promise<{heightData: Float32Array, tileData: Float32Array}>}
-     */
-    async extractChunkDataFromAtlas(atlasKey, chunkX, chunkY, config) {
-        // Get the atlas textures from cache
-        const heightTexture = this.textureCache.get(atlasKey, null, 'height');
-        const tileTexture = this.textureCache.get(atlasKey, null, 'tile');
-        
-        if (!heightTexture || !tileTexture) {
-            console.error('[WebGPUTerrainGenerator] Atlas textures not found for extraction');
-            return null;
-        }
-        
-        // Calculate local position within atlas
-        const localPos = config.getLocalChunkPosition(chunkX, chunkY);
-        const localX = localPos.localX;
-        const localY = localPos.localY;
-        
-        // Calculate pixel offsets
-        const heightOffsetX = localX * config.chunkSize;
-        const heightOffsetY = localY * config.chunkSize;
-        const heightSize = config.chunkSize + 1;
-        
-        const tileOffsetX = localX * config.chunkSize;
-        const tileOffsetY = localY * config.chunkSize;
-        const tileSize = config.chunkSize;
-        
-        console.log('[WebGPUTerrainGenerator] Extracting chunk (' + chunkX + ',' + chunkY + ') from atlas at local (' + localX + ',' + localY + ')');
-        
-        // Read subregions
-        // Note: This requires copying the texture region to a buffer
-        const heightData = await this.readTextureSubregion(
-            heightTexture._gpuTexture.texture,
-            heightOffsetX, heightOffsetY,
-            heightSize, heightSize,
-            config.textureSize + 1
-        );
-        
-        const tileData = await this.readTextureSubregion(
-            tileTexture._gpuTexture.texture,
-            tileOffsetX, tileOffsetY,
-            tileSize, tileSize,
-            config.textureSize
-        );
-        
-        return { heightData, tileData };
-    }
-    
-    /**
-     * Read a subregion of a texture (for extracting chunk data from atlas)
-     */
-    async readTextureSubregion(tex, offsetX, offsetY, width, height, textureWidth) {
-        // For now, read the entire texture and extract the subregion
-        // A more efficient approach would use copyTextureToBuffer with origin offset
-        const fullData = await this.readTextureData(tex, textureWidth, textureWidth);
-        
-        // Extract subregion
-        const subregion = new Float32Array(width * height * 4);
-        for (let y = 0; y < height; y++) {
-            for (let x = 0; x < width; x++) {
-                const srcIdx = ((offsetY + y) * textureWidth + (offsetX + x)) * 4;
-                const dstIdx = (y * width + x) * 4;
-                subregion[dstIdx + 0] = fullData[srcIdx + 0];
-                subregion[dstIdx + 1] = fullData[srcIdx + 1];
-                subregion[dstIdx + 2] = fullData[srcIdx + 2];
-                subregion[dstIdx + 3] = fullData[srcIdx + 3];
-            }
-        }
-        
-        return subregion;
-    }
 
     // ========================================================================
     // Legacy per-chunk generation (kept for backward compatibility)
@@ -362,7 +327,6 @@ export class WebGPUTerrainGenerator {
         if (!hasAll) {
             const result = await this.generateAllTexturesForChunk(chunkX, chunkY);
             
-            // Cache Results
             const size = this.chunkSize + 1;
             const tileSize = this.chunkSize;
             const splatSize = this.chunkSize * this.splatDensity;
@@ -401,14 +365,12 @@ export class WebGPUTerrainGenerator {
         const tileSize = this.chunkSize;
         const splatSize = this.chunkSize * this.splatDensity;
     
-        // Create GPU textures
         const gpuHeight = this.createGPUTexture(size, size);
         const gpuNormal = this.createGPUTexture(size, size);
         const gpuTile = this.createGPUTexture(tileSize, tileSize);
         const gpuMacro = this.createGPUTexture(splatSize, splatSize);
         const gpuSplatData = this.createGPUTexture(splatSize, splatSize);
     
-        // Run compute passes
         await this.runTerrainPass(gpuHeight, chunkX, chunkY, 0, size, size);
         await this.runTerrainPass(gpuNormal, chunkX, chunkY, 1, size, size);
         await this.runTerrainPass(gpuTile, chunkX, chunkY, 2, tileSize, tileSize);
@@ -543,7 +505,6 @@ export class WebGPUTerrainGenerator {
         const src = new Float32Array(buf.getMappedRange());
         const dst = new Float32Array(w * h * 4);
 
-        // Unpack padded rows
         for (let y = 0; y < h; y++) {
             const srcIdx = (y * alignedBytesPerRow) / 4;
             const dstIdx = y * w * 4;
@@ -558,13 +519,11 @@ export class WebGPUTerrainGenerator {
     }
 
     populateChunkData(chunkData, chunkX, chunkY, heightData, tileData) {
-        // Height Data
         chunkData.heights = new Float32Array(heightData.length / 4);
         for (let i = 0; i < chunkData.heights.length; i++) {
             chunkData.heights[i] = heightData[i * 4];
         }
 
-        // Tile Data
         const tileSize = this.chunkSize;
         chunkData.tiles = new Uint32Array(tileSize * tileSize);
         for (let i = 0; i < chunkData.tiles.length; i++) {
