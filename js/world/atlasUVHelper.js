@@ -1,90 +1,17 @@
 // js/world/atlasUVHelper.js
-// Phase 4: Helper functions for atlas UV transforms in shaders
+// Phase 4: Helper functions for atlas UV transforms
 //
-// This module provides shader code snippets and uniform setup for atlas-based terrain rendering.
-// The key change: instead of sampling textures with vUv [0,1], we transform to atlas space:
+// This module provides JavaScript utilities for atlas-based terrain rendering.
+// Shader code is in separate files:
+//   - WebGPU: js/renderer/shaders/webgpu/atlasUV.wgsl.js
+//   - WebGL2: js/renderer/shaders/webgl2/atlasUV.glsl.js
+//
+// The key concept: instead of sampling textures with vUv [0,1], we transform to atlas space:
 //   atlasUV = vUv * atlasUVScale + atlasUVOffset
 //
 // Where:
 //   atlasUVScale = 1.0 / chunksPerAxis (e.g., 0.0625 for 16 chunks per axis)
 //   atlasUVOffset = localChunkPosition * atlasUVScale (e.g., 0.0625 for chunk at local pos 1)
-
-/**
- * GLSL code for atlas UV transformation (WebGL2)
- */
-export const ATLAS_UV_GLSL = `
-// Atlas UV transform uniforms
-uniform vec2 atlasUVOffset;    // Offset within atlas [0,1]
-uniform float atlasUVScale;    // Scale factor (1.0 / chunksPerAxis)
-uniform int useAtlasMode;      // 0 = per-chunk textures, 1 = atlas textures
-
-// Transform chunk UV to atlas UV
-vec2 chunkToAtlasUV(vec2 chunkUV) {
-    if (useAtlasMode == 0) {
-        return chunkUV;  // Legacy per-chunk mode
-    }
-    return chunkUV * atlasUVScale + atlasUVOffset;
-}
-
-// Sample height from atlas or per-chunk texture
-float sampleHeight(vec2 uv) {
-    vec2 atlasUV = chunkToAtlasUV(uv);
-    return texture(heightTexture, atlasUV).r;
-}
-
-// Sample normal from atlas or per-chunk texture  
-vec3 sampleNormal(vec2 uv) {
-    vec2 atlasUV = chunkToAtlasUV(uv);
-    return texture(normalTexture, atlasUV).rgb * 2.0 - 1.0;
-}
-
-// Sample tile ID from atlas or per-chunk texture
-float sampleTileId(vec2 uv) {
-    vec2 atlasUV = chunkToAtlasUV(uv);
-    vec4 tileSample = texture(tileTexture, atlasUV);
-    float rawVal = tileSample.r;
-    return (rawVal > 1.0) ? rawVal : (rawVal * 255.0);
-}
-`;
-
-/**
- * WGSL code for atlas UV transformation (WebGPU)
- */
-export const ATLAS_UV_WGSL = `
-// Atlas UV transform - added to FragmentUniforms struct
-// atlasUVOffset: vec2<f32>,
-// atlasUVScale: f32,
-// useAtlasMode: i32,
-
-// Transform chunk UV to atlas UV
-fn chunkToAtlasUV(chunkUV: vec2<f32>) -> vec2<f32> {
-    if (fragUniforms.useAtlasMode == 0) {
-        return chunkUV;  // Legacy per-chunk mode
-    }
-    return chunkUV * fragUniforms.atlasUVScale + fragUniforms.atlasUVOffset;
-}
-
-// Sample height from atlas texture with bilinear filtering
-fn sampleAtlasHeight(uv: vec2<f32>) -> f32 {
-    let atlasUV = chunkToAtlasUV(uv);
-    return sampleRGBA32FBilinear(heightTexture, atlasUV).r;
-}
-
-// Sample normal from atlas texture
-fn sampleAtlasNormal(uv: vec2<f32>) -> vec3<f32> {
-    let atlasUV = chunkToAtlasUV(uv);
-    let normalSample = sampleRGBA32FBilinear(normalTexture, atlasUV).xyz;
-    return normalSample * 2.0 - 1.0;
-}
-
-// Sample tile ID from atlas texture
-fn sampleAtlasTileId(uv: vec2<f32>) -> f32 {
-    let atlasUV = chunkToAtlasUV(uv);
-    let tileSample = sampleRGBA32FNearest(tileTexture, atlasUV);
-    let rawVal = tileSample.r;
-    return select(rawVal * 255.0, rawVal, rawVal > 1.0);
-}
-`;
 
 /**
  * Create uniform values for atlas UV transform
@@ -156,4 +83,72 @@ export function debugAtlasUV(chunkX, chunkY, uvTransform) {
         (uvTransform.offsetX + uvTransform.scale).toFixed(4) + ', ' +
         uvTransform.offsetY.toFixed(4) + '-' + 
         (uvTransform.offsetY + uvTransform.scale).toFixed(4) + ']');
+}
+
+/**
+ * Write atlas uniforms to a WebGPU buffer (for uniform buffer updates)
+ * @param {DataView} dataView - DataView to write to
+ * @param {number} offset - Byte offset to start writing
+ * @param {Object} uvTransform - UV transform from atlas key (or null for legacy mode)
+ * @returns {number} Number of bytes written (16)
+ */
+export function writeAtlasUniformsToBuffer(dataView, offset, uvTransform) {
+    const uniforms = createAtlasUniforms(uvTransform);
+    
+    // vec2 atlasUVOffset (8 bytes)
+    dataView.setFloat32(offset + 0, uniforms.atlasUVOffset[0], true);
+    dataView.setFloat32(offset + 4, uniforms.atlasUVOffset[1], true);
+    
+    // f32 atlasUVScale (4 bytes)
+    dataView.setFloat32(offset + 8, uniforms.atlasUVScale, true);
+    
+    // i32 useAtlasMode (4 bytes)
+    dataView.setInt32(offset + 12, uniforms.useAtlasMode, true);
+    
+    return 16; // Bytes written
+}
+
+/**
+ * Get size of atlas uniform data in bytes
+ * @returns {number} Size in bytes (16)
+ */
+export function getAtlasUniformsByteSize() {
+    // vec2 (8) + f32 (4) + i32 (4) = 16 bytes
+    return 16;
+}
+
+/**
+ * Create a Float32Array for atlas uniforms (for WebGL uniform upload)
+ * @param {Object} uvTransform - UV transform from atlas key
+ * @returns {Float32Array} Array ready for gl.uniform upload
+ */
+export function createAtlasUniformArray(uvTransform) {
+    const uniforms = createAtlasUniforms(uvTransform);
+    return new Float32Array([
+        uniforms.atlasUVOffset[0],
+        uniforms.atlasUVOffset[1],
+        uniforms.atlasUVScale,
+        uniforms.useAtlasMode
+    ]);
+}
+
+/**
+ * Check if a chunkData object is using atlas mode
+ * @param {Object} chunkData - Chunk data from world generator
+ * @returns {boolean}
+ */
+export function isAtlasMode(chunkData) {
+    return chunkData && chunkData.useAtlasMode === true;
+}
+
+/**
+ * Get UV transform from chunkData (with fallback to legacy)
+ * @param {Object} chunkData - Chunk data from world generator
+ * @returns {Object|null} UV transform or null for legacy mode
+ */
+export function getUVTransform(chunkData) {
+    if (!chunkData || !chunkData.useAtlasMode) {
+        return null;
+    }
+    return chunkData.uvTransform || null;
 }

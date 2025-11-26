@@ -308,6 +308,267 @@ export class WebGPUTerrainGenerator {
         this.device.queue.submit([enc.finish()]);
     }
 
+    /**
+     * Extract chunk data from an atlas texture.
+     * Reads a subregion of the atlas corresponding to a specific chunk.
+     * Used for gameplay data (collision detection, height queries).
+     * 
+     * @param {TextureAtlasKey} atlasKey - The atlas containing the chunk
+     * @param {number} chunkX - Chunk X coordinate
+     * @param {number} chunkY - Chunk Y coordinate
+     * @param {DataTextureConfig} config - Atlas configuration
+     * @returns {Object|null} - {heightData, tileData} or null if extraction fails
+     */
+    async extractChunkDataFromAtlas(atlasKey, chunkX, chunkY, config) {
+        console.log('[WebGPUTerrainGenerator] extractChunkDataFromAtlas: chunk=(' + chunkX + ',' + chunkY + ')');
+        
+        // Get the atlas textures from cache
+        const heightAtlasData = this.textureCache.getAtlasForChunk(chunkX, chunkY, 'height', config);
+        const tileAtlasData = this.textureCache.getAtlasForChunk(chunkX, chunkY, 'tile', config);
+        
+        if (!heightAtlasData || !tileAtlasData) {
+            console.warn('[WebGPUTerrainGenerator] Atlas textures not found for chunk (' + chunkX + ',' + chunkY + ')');
+            return null;
+        }
+        
+        // Get local position within atlas
+        const localPos = config.getLocalChunkPosition(chunkX, chunkY);
+        const localX = localPos.localX;
+        const localY = localPos.localY;
+        
+        console.log('[WebGPUTerrainGenerator]   Local position in atlas: (' + localX + ',' + localY + ')');
+        
+        // Calculate pixel offsets
+        const heightSize = this.chunkSize + 1;
+        const tileSize = this.chunkSize;
+        
+        const heightOffsetX = localX * this.chunkSize;
+        const heightOffsetY = localY * this.chunkSize;
+        const tileOffsetX = localX * this.chunkSize;
+        const tileOffsetY = localY * this.chunkSize;
+        
+        console.log('[WebGPUTerrainGenerator]   Height offset: (' + heightOffsetX + ',' + heightOffsetY + '), size: ' + heightSize);
+        console.log('[WebGPUTerrainGenerator]   Tile offset: (' + tileOffsetX + ',' + tileOffsetY + '), size: ' + tileSize);
+        
+        try {
+            // Get the GPU textures
+            const heightTex = heightAtlasData.texture;
+            const tileTex = tileAtlasData.texture;
+            
+            if (!heightTex || !tileTex) {
+                console.warn('[WebGPUTerrainGenerator] GPU textures not available');
+                return null;
+            }
+            
+            // Get the underlying GPU texture
+            const gpuHeightTex = heightTex._gpuTexture ? heightTex._gpuTexture.texture : null;
+            const gpuTileTex = tileTex._gpuTexture ? tileTex._gpuTexture.texture : null;
+            
+            if (!gpuHeightTex || !gpuTileTex) {
+                console.warn('[WebGPUTerrainGenerator] No GPU texture handles available');
+                return null;
+            }
+            
+            // Read subregions from the atlas textures
+            const heightData = await this.readTextureSubregion(
+                gpuHeightTex, 
+                heightOffsetX, heightOffsetY, 
+                heightSize, heightSize,
+                config.textureSize + 1  // Atlas height texture is textureSize+1
+            );
+            
+            const tileData = await this.readTextureSubregion(
+                gpuTileTex,
+                tileOffsetX, tileOffsetY,
+                tileSize, tileSize,
+                config.textureSize  // Atlas tile texture is textureSize
+            );
+            
+            console.log('[WebGPUTerrainGenerator]   Extracted height data: ' + heightData.length + ' floats');
+            console.log('[WebGPUTerrainGenerator]   Extracted tile data: ' + tileData.length + ' floats');
+            
+            return { heightData, tileData };
+            
+        } catch (error) {
+            console.error('[WebGPUTerrainGenerator] Failed to extract chunk data:', error);
+            return null;
+        }
+    }
+    
+    /**
+     * Read a subregion from a GPU texture.
+     * Note: WebGPU doesn't support reading subregions directly, so we read the full texture
+     * and extract the subregion on CPU. This could be optimized with a compute shader.
+     */
+    async readTextureSubregion(gpuTex, offsetX, offsetY, width, height, textureWidth) {
+        // For now, read the full texture and extract subregion
+        // This is inefficient but works. Optimization: use compute shader to copy subregion
+        
+        const textureHeight = textureWidth; // Assume square
+        const bytesPerRow = textureWidth * 16; // RGBA32F = 16 bytes per pixel
+        const alignedBytesPerRow = Math.ceil(bytesPerRow / 256) * 256;
+        const bufferSize = alignedBytesPerRow * textureHeight;
+        
+        const readBuffer = this.device.createBuffer({
+            size: bufferSize,
+            usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+        });
+        
+        const encoder = this.device.createCommandEncoder();
+        encoder.copyTextureToBuffer(
+            { texture: gpuTex },
+            { buffer: readBuffer, bytesPerRow: alignedBytesPerRow },
+            [textureWidth, textureHeight]
+        );
+        this.device.queue.submit([encoder.finish()]);
+        
+        await readBuffer.mapAsync(GPUMapMode.READ);
+        const fullData = new Float32Array(readBuffer.getMappedRange());
+        
+        // Extract subregion
+        const subregion = new Float32Array(width * height * 4);
+        
+        for (let y = 0; y < height; y++) {
+            const srcRow = offsetY + y;
+            const srcRowOffset = (srcRow * alignedBytesPerRow) / 4; // In floats
+            
+            for (let x = 0; x < width; x++) {
+                const srcX = offsetX + x;
+                const srcIdx = srcRowOffset + srcX * 4;
+                const dstIdx = (y * width + x) * 4;
+                
+                subregion[dstIdx + 0] = fullData[srcIdx + 0];
+                subregion[dstIdx + 1] = fullData[srcIdx + 1];
+                subregion[dstIdx + 2] = fullData[srcIdx + 2];
+                subregion[dstIdx + 3] = fullData[srcIdx + 3];
+            }
+        }
+        
+        readBuffer.unmap();
+        readBuffer.destroy();
+        
+        return subregion;
+    }
+
+    // ========================================================================
+    // Chunk data extraction from atlas (for gameplay - collision, etc.)
+    // ========================================================================
+    
+    /**
+     * Extract height and tile data for a specific chunk from an atlas texture.
+     * This is needed for gameplay (collision detection, height queries, etc.)
+     * 
+     * @param {TextureAtlasKey} atlasKey - The atlas containing this chunk
+     * @param {number} chunkX - Chunk X coordinate
+     * @param {number} chunkY - Chunk Y coordinate
+     * @param {DataTextureConfig} config - Atlas configuration
+     * @returns {Promise<{heightData: Float32Array, tileData: Float32Array}|null>}
+     */
+    async extractChunkDataFromAtlas(atlasKey, chunkX, chunkY, config) {
+        console.log('[WebGPUTerrainGenerator] extractChunkDataFromAtlas: chunk=(' + chunkX + ',' + chunkY + ')');
+        
+        // Get the atlas textures from cache
+        const heightTexture = this.textureCache.get(atlasKey, null, 'height');
+        const tileTexture = this.textureCache.get(atlasKey, null, 'tile');
+        
+        if (!heightTexture || !tileTexture) {
+            console.warn('[WebGPUTerrainGenerator] Atlas textures not found for ' + atlasKey.toString());
+            return null;
+        }
+        
+        // Calculate the local position of this chunk within the atlas
+        const localPos = config.getLocalChunkPosition(chunkX, chunkY);
+        const chunkSize = config.chunkSize;
+        
+        // Calculate pixel offsets within the atlas texture
+        const heightOffsetX = localPos.localX * chunkSize;
+        const heightOffsetY = localPos.localY * chunkSize;
+        const heightWidth = chunkSize + 1;
+        const heightHeight = chunkSize + 1;
+        
+        const tileOffsetX = localPos.localX * chunkSize;
+        const tileOffsetY = localPos.localY * chunkSize;
+        const tileWidth = chunkSize;
+        const tileHeight = chunkSize;
+        
+        console.log('[WebGPUTerrainGenerator]   Local position: (' + localPos.localX + ',' + localPos.localY + ')');
+        console.log('[WebGPUTerrainGenerator]   Height region: offset=(' + heightOffsetX + ',' + heightOffsetY + '), size=' + heightWidth + 'x' + heightHeight);
+        
+        // Get the GPU textures
+        const gpuHeightTex = heightTexture._gpuTexture ? heightTexture._gpuTexture.texture : null;
+        const gpuTileTex = tileTexture._gpuTexture ? tileTexture._gpuTexture.texture : null;
+        
+        if (!gpuHeightTex || !gpuTileTex) {
+            console.warn('[WebGPUTerrainGenerator] GPU textures not available');
+            return null;
+        }
+        
+        // Read subregions from GPU textures
+        const heightData = await this.readTextureSubregion(
+            gpuHeightTex, 
+            heightOffsetX, heightOffsetY, 
+            heightWidth, heightHeight
+        );
+        
+        const tileData = await this.readTextureSubregion(
+            gpuTileTex,
+            tileOffsetX, tileOffsetY,
+            tileWidth, tileHeight
+        );
+        
+        console.log('[WebGPUTerrainGenerator]   Extracted ' + (heightData.length / 4) + ' height pixels, ' + (tileData.length / 4) + ' tile pixels');
+        
+        return { heightData, tileData };
+    }
+
+    /**
+     * Read a subregion from a GPU texture
+     */
+    async readTextureSubregion(tex, offsetX, offsetY, width, height) {
+        const bytesPerPixel = 16;  // RGBA32F
+        const bytesPerRow = width * bytesPerPixel;
+        const alignedBytesPerRow = Math.ceil(bytesPerRow / 256) * 256;
+        const bufferSize = alignedBytesPerRow * height;
+        
+        const stagingBuffer = this.device.createBuffer({
+            size: bufferSize,
+            usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+        });
+        
+        const encoder = this.device.createCommandEncoder();
+        encoder.copyTextureToBuffer(
+            {
+                texture: tex,
+                origin: { x: offsetX, y: offsetY, z: 0 }
+            },
+            {
+                buffer: stagingBuffer,
+                bytesPerRow: alignedBytesPerRow,
+                rowsPerImage: height
+            },
+            { width: width, height: height, depthOrArrayLayers: 1 }
+        );
+        
+        this.device.queue.submit([encoder.finish()]);
+        
+        await stagingBuffer.mapAsync(GPUMapMode.READ);
+        const srcData = new Float32Array(stagingBuffer.getMappedRange());
+        const dstData = new Float32Array(width * height * 4);
+        
+        for (let y = 0; y < height; y++) {
+            const srcRowStart = (y * alignedBytesPerRow) / 4;
+            const dstRowStart = y * width * 4;
+            for (let x = 0; x < width * 4; x++) {
+                dstData[dstRowStart + x] = srcData[srcRowStart + x];
+            }
+        }
+        
+        stagingBuffer.unmap();
+        stagingBuffer.destroy();
+        
+        return dstData;
+    }
+
     // ========================================================================
     // Legacy per-chunk generation (kept for backward compatibility)
     // ========================================================================

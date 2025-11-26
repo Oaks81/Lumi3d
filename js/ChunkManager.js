@@ -1,56 +1,33 @@
 // ChunkManager.js
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.178.0/build/three.module.js';
-
+import { PlanetaryChunkAddress } from './planet/planetaryChunkAddress.js';
 export class ChunkManager {
     constructor(worldGenerator, options = {}) {
         this.worldGenerator = worldGenerator;
         this.loadedChunks = new Map();
         this.chunkSize = this.worldGenerator.chunkSize;
         
-        // ============================================
-        // SPHERICAL PROJECTION CONFIGURATION
-        // Set to false for flat terrain (original behavior)
-        // Set to true for planetary spherical projection
-        // ============================================
         this.sphericalMapper = options.sphericalMapper || null;
         this.useSphericalProjection = options.useSphericalProjection && this.sphericalMapper !== null;
         
         console.log(`🗺️ ChunkManager mode: ${this.useSphericalProjection ? 'SPHERICAL' : 'FLAT'}`);
-        
-        if (this.useSphericalProjection) {
-            console.log(`  Planet-aware chunk mapping enabled`);
-        } else {
-            console.log(`  Classic flat terrain chunk mapping`);
-        }
 
-        // Track async operations and priorities
         this.pendingChunks = new Map();
         this.chunkQueue = [];
-        this.maxConcurrentChunks = 2;
+        this.maxConcurrentChunks = 4; // Increased slightly
         this.isProcessing = false;
 
-        // Callbacks for when chunks are ready
         this.chunkReadyCallbacks = new Map();
         this.progressCallbacks = new Set();
         this.chunkLoadRadius = 2;
-        
-        // Track last player position (for flat mode)
-        this.lastPlayerChunk = null;
+    }
+    async initialize() {
+        console.log("Chunk manager initializing...");
+        // Use standard update logic to load initial chunks
+        await this.update(0, 0, 100); 
+        console.log("Chunk manager ready");
     }
 
-    async initialize() {
-        console.log("Chunk manager initializing...")
-        const promises = [];
-        // Only load chunks in immediate vicinity for initial load
-        for (let chunkY = -1; chunkY <= 1; chunkY++) {
-            for (let chunkX = -1; chunkX <= 1; chunkX++) {
-                const distance = Math.abs(chunkX) + Math.abs(chunkY);
-                promises.push(this.requestChunk(chunkX, chunkY, distance));
-            }
-        }
-        await Promise.allSettled(promises);
-        console.log("Chunk manager ready")
-    }
 
     /**
      * Update chunk loading based on player position
@@ -58,6 +35,7 @@ export class ChunkManager {
      * @param {number} playerY - Player Y position (horizontal in game coords, or Z in Three.js)
      * @param {number} playerZ - Player altitude (optional, defaults to 50)
      */
+
 
     async update(playerX, playerY, playerZ = null) {
         if (this.useSphericalProjection && this.sphericalMapper) {
@@ -69,25 +47,19 @@ export class ChunkManager {
         this._processChunkQueue();
     }
 
+
     _updateSpherical(playerX, playerY, playerZ) {
         const altitude = playerZ ?? 50;
-        
-        // Convert to render coords
-        const cameraRenderPos = new THREE.Vector3(
-            playerX,
-            altitude,
-            playerY
-        );
-        
+        const cameraRenderPos = new THREE.Vector3(playerX, altitude, playerY);
         
         const chunkKeys = this.sphericalMapper.getChunksInRadius(
             cameraRenderPos, 
             this.chunkLoadRadius * this.chunkSize
         );
         
-   
         this._updateChunkSet(chunkKeys);
     }
+    
     
     _updateFlat(playerX, playerY) {
         const viewDistance = 160;
@@ -98,26 +70,23 @@ export class ChunkManager {
         const maxChunkY = Math.ceil((playerY + viewDistance) / this.chunkSize);
         
         const chunkKeys = [];
-        
         for (let cx = minChunkX; cx <= maxChunkX; cx++) {
             for (let cy = minChunkY; cy <= maxChunkY; cy++) {
                 chunkKeys.push(`${cx},${cy}`);
             }
         }
-        
 
         this._updateChunkSet(chunkKeys);
     }
 
+
+
     _updateChunkSet(chunkKeys) {
         const visibleSet = new Set(chunkKeys);
         
-        if (visibleSet.size === 0) {
-            console.warn('⚠️ No visible chunks');
-            return;
-        }
+        if (visibleSet.size === 0) return;
         
-        // Unload chunks not in visible set
+        // Unload invisible chunks
         for (const [key, chunkData] of this.loadedChunks) {
             if (!visibleSet.has(key)) {
                 this.unloadChunk(key);
@@ -127,62 +96,51 @@ export class ChunkManager {
         // Load new chunks
         for (const key of chunkKeys) {
             if (!this.loadedChunks.has(key) && !this.pendingChunks.has(key)) {
-                const [x, y] = key.split(',').map(Number);
-                this.requestChunk(x, y, 0);
+                // FIX: Handle Spherical Keys vs Flat Keys
+                if (key.includes(':')) {
+                    // Pass the string key directly for spherical chunks
+                    this.requestChunk(key, 0); 
+                } else {
+                    // Split for flat chunks
+                    const [x, y] = key.split(',').map(Number);
+                    this.requestChunk(x, y, 0);
+                }
             }
         }
     }
 
-
     async requestChunk(chunkX, chunkY, priority = 10, onReady = null) {
         let chunkKey;
+        
+        // Handle overload: requestChunk("face:x,y:lod", priority, onReady)
         if (typeof chunkX === 'string' && chunkX.includes(':')) {
-            // Planetary key format
             chunkKey = chunkX;
-            priority = chunkY; // Second arg is priority
-            onReady = priority; // Third arg is callback
+            // Shift arguments if needed
+            if (typeof chunkY === 'number') priority = chunkY;
+            if (typeof priority === 'function') onReady = priority;
+            if (typeof chunkY === 'function') onReady = chunkY;
         } else {
-            // Flat key format
             chunkKey = `${chunkX},${chunkY}`;
         }
     
-        // Already loaded
-        if (this.loadedChunks.has(chunkKey)) {
-            if (onReady) onReady(this.loadedChunks.get(chunkKey));
-            return this.loadedChunks.get(chunkKey);
-        }
-    
-        // Already loaded
         if (this.loadedChunks.has(chunkKey)) {
             if (onReady) onReady(this.loadedChunks.get(chunkKey));
             return this.loadedChunks.get(chunkKey);
         }
 
-        // Already pending
         if (this.pendingChunks.has(chunkKey)) {
-            if (onReady) {
-                if (!this.chunkReadyCallbacks.has(chunkKey)) {
-                    this.chunkReadyCallbacks.set(chunkKey, []);
-                }
-                this.chunkReadyCallbacks.get(chunkKey).push(onReady);
-            }
+            if (onReady) this._addCallback(chunkKey, onReady);
             return this.pendingChunks.get(chunkKey);
         }
 
-        // Check if already in queue
+        // Check queue
         const existingRequest = this.chunkQueue.find(req => req.chunkKey === chunkKey);
         if (existingRequest) {
-            // Update priority if higher (lower number = higher priority)
             if (priority < existingRequest.priority) {
                 existingRequest.priority = priority;
                 this.chunkQueue.sort((a, b) => a.priority - b.priority);
             }
-            if (onReady) {
-                if (!this.chunkReadyCallbacks.has(chunkKey)) {
-                    this.chunkReadyCallbacks.set(chunkKey, []);
-                }
-                this.chunkReadyCallbacks.get(chunkKey).push(onReady);
-            }
+            if (onReady) this._addCallback(chunkKey, onReady);
             return null;
         }
 
@@ -195,21 +153,17 @@ export class ChunkManager {
             onReady
         });
 
-        // Sort queue by priority
         this.chunkQueue.sort((a, b) => a.priority - b.priority);
-
         this._processChunkQueue();
         return null;
     }
-
     async _processChunkQueue() {
         if (this.isProcessing || this.chunkQueue.length === 0) return;
 
         this.isProcessing = true;
-
         try {
-            const activeTasks = Array.from(this.pendingChunks.values());
-            const availableSlots = this.maxConcurrentChunks - activeTasks.length;
+            const activeTasks = this.pendingChunks.size;
+            const availableSlots = this.maxConcurrentChunks - activeTasks;
 
             for (let i = 0; i < Math.min(availableSlots, this.chunkQueue.length); i++) {
                 const chunkRequest = this.chunkQueue.shift();
@@ -221,69 +175,119 @@ export class ChunkManager {
             this.isProcessing = false;
         }
 
-        // Continue processing if there are more chunks
         if (this.chunkQueue.length > 0) {
             setTimeout(() => this._processChunkQueue(), 10);
         }
     }
+
+    _addCallback(chunkKey, callback) {
+        if (!this.chunkReadyCallbacks.has(chunkKey)) {
+            this.chunkReadyCallbacks.set(chunkKey, []);
+        }
+        this.chunkReadyCallbacks.get(chunkKey).push(callback);
+    }
     async _startChunkGeneration(chunkRequest) {
         const { chunkKey, onReady } = chunkRequest;
         
-        // Parse key (supports both formats)
         let chunkX, chunkY, face = null, lod = 0;
         
         if (chunkKey.includes(':')) {
-            // Planetary format: "face:x,y:lod"
-            const address = PlanetaryChunkAddress.fromKey(chunkKey);
-            face = address.face;
-            chunkX = address.x;
-            chunkY = address.y;
-            lod = address.lod;
+            // Use PlanetaryChunkAddress for robust parsing
+            try {
+                const address = PlanetaryChunkAddress.fromKey(chunkKey);
+                face = address.face;
+                chunkX = address.x;
+                chunkY = address.y;
+                lod = address.lod;
+            } catch (e) {
+                console.error(`❌ Invalid key in _startChunkGeneration: ${chunkKey}`, e);
+                return;
+            }
         } else {
-            // Flat format: "x,y"
             [chunkX, chunkY] = chunkKey.split(',').map(Number);
         }
     
-        // Register callback
-        if (onReady) {
-            if (!this.chunkReadyCallbacks.has(chunkKey)) {
-                this.chunkReadyCallbacks.set(chunkKey, []);
-            }
-            this.chunkReadyCallbacks.get(chunkKey).push(onReady);
-        }
+        if (onReady) this._addCallback(chunkKey, onReady);
     
-     
         const chunkPromise = this._generateChunkAsync(chunkX, chunkY, face, lod);
         this.pendingChunks.set(chunkKey, chunkPromise);
     
         try {
             const chunkData = await chunkPromise;
-            this.loadedChunks.set(chunkKey, chunkData);
-    
-            // Call callbacks
-            const callbacks = this.chunkReadyCallbacks.get(chunkKey) || [];
-            callbacks.forEach(callback => callback(chunkData));
-            this.chunkReadyCallbacks.delete(chunkKey);
-    
-            this._notifyProgress();
-    
-            console.log(`✅ Chunk ${chunkKey} loaded`);
-    
+            if (chunkData) {
+                this.loadedChunks.set(chunkKey, chunkData);
+                
+                const callbacks = this.chunkReadyCallbacks.get(chunkKey) || [];
+                callbacks.forEach(cb => cb(chunkData));
+                this.chunkReadyCallbacks.delete(chunkKey);
+                
+                this._notifyProgress();
+            }
         } catch (error) {
             console.error(`❌ Failed to generate chunk ${chunkKey}:`, error);
         } finally {
             this.pendingChunks.delete(chunkKey);
             setTimeout(() => this._processChunkQueue(), 0);
         }
-    }   
+    }
+    
+
+    async _startChunkGeneration(chunkRequest) {
+        const { chunkKey, onReady } = chunkRequest;
+        
+        let chunkX, chunkY, face = null, lod = 0;
+        
+        if (chunkKey.includes(':')) {
+            // Use PlanetaryChunkAddress for robust parsing
+            try {
+                const address = PlanetaryChunkAddress.fromKey(chunkKey);
+                face = address.face;
+                chunkX = address.x;
+                chunkY = address.y;
+                lod = address.lod;
+            } catch (e) {
+                console.error(`❌ Invalid key in _startChunkGeneration: ${chunkKey}`, e);
+                return;
+            }
+        } else {
+            [chunkX, chunkY] = chunkKey.split(',').map(Number);
+        }
+    
+        if (onReady) this._addCallback(chunkKey, onReady);
+    
+        const chunkPromise = this._generateChunkAsync(chunkX, chunkY, face, lod);
+        this.pendingChunks.set(chunkKey, chunkPromise);
+    
+        try {
+            const chunkData = await chunkPromise;
+            if (chunkData) {
+                this.loadedChunks.set(chunkKey, chunkData);
+                
+                const callbacks = this.chunkReadyCallbacks.get(chunkKey) || [];
+                callbacks.forEach(cb => cb(chunkData));
+                this.chunkReadyCallbacks.delete(chunkKey);
+                
+                this._notifyProgress();
+            }
+        } catch (error) {
+            console.error(`❌ Failed to generate chunk ${chunkKey}:`, error);
+        } finally {
+            this.pendingChunks.delete(chunkKey);
+            setTimeout(() => this._processChunkQueue(), 0);
+        }
+    }
+    
+    
     async _generateChunkAsync(chunkX, chunkY, face = null, lod = 0) {
-        const chunkData = await this.worldGenerator.generateChunk(
-            chunkX, 
-            chunkY, 
-            face, 
-            lod
-        );
-        this._generateFeaturesAsync(chunkData, chunkX, chunkY);
+        const chunkData = await this.worldGenerator.generateChunk(chunkX, chunkY, face, lod);
+        // Generate features
+        if (this.worldGenerator.featureGenerator) {
+            try {
+                await this.worldGenerator.featureGenerator.generateFeatures(chunkData, chunkX, chunkY);
+            } catch (e) {
+                console.warn("Feature generation failed", e);
+            }
+        }
         return chunkData;
     }
     async _generateFeaturesAsync(chunkData, chunkX, chunkY) {
@@ -423,16 +427,23 @@ worldToChunkCoords(worldX, worldZ) {
         chunkY: Math.floor(worldZ / this.chunkSize)  // ✅ Note: chunkY uses worldZ
     };
 }
-
-    unloadChunk(chunkKey) {
-        const entry = this.loadedChunks.get(chunkKey);
-        if (!entry) {
-            return;
-        }
+unloadChunk(chunkKey) {
+    const entry = this.loadedChunks.get(chunkKey);
+    if (!entry) return;
     
-        // Remove from loaded chunks
-        this.loadedChunks.delete(chunkKey);
-        
-        console.log(`🗑️ Unloaded chunk ${chunkKey}`);
+    // Notify generator to release resources (e.g. decrement atlas refcount)
+    if (this.worldGenerator.releaseChunk) {
+        const isSpherical = chunkKey.includes(':');
+        if (isSpherical) {
+            const address = PlanetaryChunkAddress.fromKey(chunkKey);
+            this.worldGenerator.releaseChunk(address.x, address.y, address.face);
+        } else {
+            const [x, y] = chunkKey.split(',').map(Number);
+            this.worldGenerator.releaseChunk(x, y);
+        }
     }
+    
+    if (entry.dispose) entry.dispose();
+    this.loadedChunks.delete(chunkKey);
+}
 }

@@ -159,6 +159,13 @@ export class TextureCache {
      * @returns {Object|null} - {texture, uvTransform} or null if not found
      */
     getAtlasForChunk(chunkX, chunkY, type, config = null, face = null) {
+        // VALIDATION: Return null for invalid coordinates
+        if (typeof chunkX !== 'number' || isNaN(chunkX) ||
+            typeof chunkY !== 'number' || isNaN(chunkY)) {
+            console.warn('[TextureCache] getAtlasForChunk called with invalid coords: (' + chunkX + ',' + chunkY + ')');
+            return null;
+        }
+        
         const cfg = config || this.atlasConfig;
         
         // Calculate which atlas contains this chunk
@@ -192,6 +199,13 @@ export class TextureCache {
      * Check if atlas exists for a chunk
      */
     hasAtlasForChunk(chunkX, chunkY, type, config = null, face = null) {
+        // VALIDATION: Return false for invalid coordinates instead of crashing
+        if (typeof chunkX !== 'number' || isNaN(chunkX) ||
+            typeof chunkY !== 'number' || isNaN(chunkY)) {
+            console.warn('[TextureCache] hasAtlasForChunk called with invalid coords: (' + chunkX + ',' + chunkY + ')');
+            return false;
+        }
+        
         const cfg = config || this.atlasConfig;
         const atlasKey = TextureAtlasKey.fromChunkCoords(chunkX, chunkY, face, cfg);
         const cacheKey = this.makeKey(atlasKey, null, type);
@@ -202,6 +216,13 @@ export class TextureCache {
      * Check if ALL required texture types exist for an atlas
      */
     hasCompleteAtlas(chunkX, chunkY, config = null, face = null) {
+        // VALIDATION: Return false for invalid coordinates
+        if (typeof chunkX !== 'number' || isNaN(chunkX) ||
+            typeof chunkY !== 'number' || isNaN(chunkY)) {
+            console.warn('[TextureCache] hasCompleteAtlas called with invalid coords: (' + chunkX + ',' + chunkY + ')');
+            return false;
+        }
+        
         const cfg = config || this.atlasConfig;
         const types = cfg.atlasTextureTypes || ['height', 'normal', 'tile', 'splatData', 'macro'];
         
