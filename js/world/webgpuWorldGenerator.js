@@ -79,6 +79,13 @@ export class WebGPUWorldGenerator extends BaseWorldGenerator {
     async generateChunk(chunkX, chunkY, face = null, lod = 0) {
         await this._ready;
         
+        // Validate inputs - protect against NaN from ChunkManager bugs
+        if (typeof chunkX !== 'number' || isNaN(chunkX) || 
+            typeof chunkY !== 'number' || isNaN(chunkY)) {
+            console.error('[WebGPUWorldGenerator] Invalid chunk coordinates: (' + chunkX + ',' + chunkY + ')');
+            throw new Error('Invalid chunk coordinates: chunkX=' + chunkX + ', chunkY=' + chunkY);
+        }
+        
         console.log('[WebGPUWorldGenerator] generateChunk(' + chunkX + ', ' + chunkY + ', face=' + face + ', lod=' + lod + ')');
         
         // Create chunk data structure
