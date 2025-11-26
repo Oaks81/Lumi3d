@@ -1,7 +1,11 @@
+// js/world/webgpuWorldGenerator.js
+// Fix: Added TextureAtlasKey import
+
 import { BaseWorldGenerator } from './baseWorldGenerator.js';
 import { WebGPUTerrainGenerator } from "./webgpuTerrainGenerator.js";
 import { ChunkData } from "./chunkData.js";
 import { TreeFeature } from './features/treeFeature.js';
+import { TextureAtlasKey } from './textureAtlasKey.js';  // ADDED: Missing import
 
 export class WebGPUWorldGenerator extends BaseWorldGenerator {
     constructor(renderer, textureCache, chunkSize, seed) {
@@ -18,12 +22,12 @@ export class WebGPUWorldGenerator extends BaseWorldGenerator {
         if (this.backend && this.backend.device) {
             this.device = this.backend.device;
             this.adapter = this.backend.adapter;
-            console.log('✅ WebGPUWorldGenerator: Attached to existing Backend Device');
+            console.log('[OK] WebGPUWorldGenerator: Attached to existing Backend Device');
             return;
         }
 
         // --- FALLBACK: Only create a device if we are running standalone (no backend) ---
-        console.warn('⚠️ WebGPUWorldGenerator: Creating ISOLATED device (Context sharing issues WILL occur)');
+        console.warn('[WARN] WebGPUWorldGenerator: Creating ISOLATED device (Context sharing issues WILL occur)');
 
         if (!navigator.gpu) {
             throw new Error('WebGPU not supported in this browser');
@@ -46,7 +50,7 @@ export class WebGPUWorldGenerator extends BaseWorldGenerator {
         });
 
         this.device.lost.then((info) => {
-            console.error(`WebGPU device lost: ${info.message}`);
+            console.error('[ERROR] WebGPU device lost: ' + info.message);
         });
 
         console.log('WebGPU device initialized for world generation (Standalone)');
@@ -70,16 +74,16 @@ export class WebGPUWorldGenerator extends BaseWorldGenerator {
     async generateChunk(chunkX, chunkY, face = null, lod = 0) {
         await this._ready;
         
-        console.log(`[WebGPUWorldGenerator] generateChunk(${chunkX}, ${chunkY}, face=${face}, lod=${lod})`);
+        console.log('[WebGPUWorldGenerator] generateChunk(' + chunkX + ', ' + chunkY + ', face=' + face + ', lod=' + lod + ')');
         
         // Check if atlas exists for this chunk
         const needsAtlas = !this.hasAtlasForChunk(chunkX, chunkY, face);
         
         if (needsAtlas) {
-            console.log(`[WebGPUWorldGenerator] Atlas not found, generating...`);
+            console.log('[WebGPUWorldGenerator] Atlas not found, generating...');
             await this.generateAtlasForChunk(chunkX, chunkY, face);
         } else {
-            console.log(`[WebGPUWorldGenerator] Atlas already exists`);
+            console.log('[WebGPUWorldGenerator] Atlas already exists');
         }
         
         // Create chunk data structure
@@ -89,13 +93,19 @@ export class WebGPUWorldGenerator extends BaseWorldGenerator {
             chunkData.baseAltitude = this.planetConfig.radius;
         }
         
-        // NEW: Store atlas info in chunk data
+        // Store atlas info in chunk data
+        // TextureAtlasKey is now properly imported
         const atlasKey = TextureAtlasKey.fromChunkCoords(chunkX, chunkY, face, this.atlasConfig);
         chunkData.atlasKey = atlasKey;
         chunkData.uvTransform = atlasKey.getChunkUVTransform(chunkX, chunkY);
         
-        console.log(`[WebGPUWorldGenerator] Chunk UV transform:`, chunkData.uvTransform);
+        console.log('[WebGPUWorldGenerator] Chunk UV transform:', chunkData.uvTransform);
         
+        // Generate terrain textures for this chunk (legacy per-chunk for now)
+        // Phase 2 will change this to atlas-based generation
+        if (this.modules.tiledTerrain.enabled && this.modules.tiledTerrain.instance) {
+            await this.modules.tiledTerrain.instance.generateTerrain(chunkData, chunkX, chunkY);
+        }
 
         chunkData.calculateWaterVisibility(this.globalWaterLevel);
 
@@ -112,8 +122,7 @@ export class WebGPUWorldGenerator extends BaseWorldGenerator {
             chunkData.waterFeatures = [];
         }
 
-        if (this.modules.staticObjects.enabled &&
-            !chunkData.isFullySubmerged) {
+        if (this.modules.staticObjects.enabled && !chunkData.isFullySubmerged) {
             this.generateObjectData(chunkData, chunkX, chunkY);
         }
 
