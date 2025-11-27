@@ -1,6 +1,4 @@
 // js/world/dataTextureConfiguration.js
-// Single source of truth for atlas dimensions
-// All systems should reference config.chunksPerAxis instead of hardcoding values
 
 export class DataTextureConfig {
     /**

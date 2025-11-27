@@ -107,9 +107,8 @@ export const TREE_TEXTURES = {
     blendMode: "multiply",
     seed: 42,
     // Stretch the noise vertically
-    cellStretch: [0.5, 3.0], // This isn't a feature of FBM in your code, but adding vertical grain helps
-    // A vertical "cells" layer or a domain-warped FBM would be better.
-    // Let's use domain warp for vertical streaks.
+    cellStretch: [0.5, 3.0],
+
     domainWarp: true,
     warpStrength: 10.0, // High strength
     warpFrequency: 0.005, // Low frequency
@@ -291,20 +290,6 @@ const REUSABLE_TEXTURES = {
       { type: "perlin", octaves: 3, frequency: 0.015, color: "#2a5d67", opacity: 0.5, blendMode: "multiply", seed: 40302 }
     ]
 };
-
-// Total MICRO unique textures: 6 (grass) + 1 (tundra) + 1 (rock) = 8 unique
-// But file-based has only 7! Let me recount the file-based:
-// transparent128.png (index 0)
-// okko1.png (index 1) - GRASS Spring 0
-// okko2.png (index 2) - GRASS Spring 1  
-// okkoa.png (index 3) - GRASS Summer 0
-// okkob.png (index 4) - GRASS Summer 1
-// grass1.png (index 5) - GRASS Autumn/Winter (reused)
-// tundra1.jpg (index 6) - TUNDRA all seasons
-// rock1.png (index 7) - STONE and ROCK all seasons
-
-// So file-based has: 1 transparent + 5 grass + 1 tundra + 1 rock = 8 total, 7 unique images
-// We need: 5 unique grass textures, not 6!
 
 export const TEXTURE_CONFIG = [
   

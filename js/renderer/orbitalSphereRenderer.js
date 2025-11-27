@@ -133,14 +133,14 @@ async _createMaterial() {
             sunDirection: { value: new THREE.Vector3(0.5, 0.5, 0.5).normalize() },
             opacity: { value: 1.0 },
             planetTexture: { value: null },
-            planetTextureSampler: { value: 'linear' }  // ✅ Add sampler
+            planetTextureSampler: { value: 'linear' } 
             
         },
         side: 'back',
         depthTest: true,
         depthWrite: true,
         transparent: true,
-        vertexLayout: vertexLayout  // ✅ Add explicit layout
+        vertexLayout: vertexLayout  
     });
     
     this.material._needsCompile = true;

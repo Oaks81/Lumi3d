@@ -291,12 +291,12 @@ export class PerformanceProfiler {
         const avg = this.getAverages();
         if (!avg) return;
         
-        console.group(`🎮 Performance Summary (last ${this.history.length} frames)`);
-        console.log(`📊 Average FPS: ${avg.fps.toFixed(1)}`);
-        console.log(`⏱️ Average Frame Time: ${avg.frameTime.toFixed(2)}ms`);
-        console.log(`💾 Memory: ${avg.memory.used.toFixed(1)}MB / ${avg.memory.total.toFixed(1)}MB`);
+        console.group(`Performance Summary (last ${this.history.length} frames)`);
+        console.log(` Average FPS: ${avg.fps.toFixed(1)}`);
+        console.log(`⏱ Average Frame Time: ${avg.frameTime.toFixed(2)}ms`);
+        console.log(` Memory: ${avg.memory.used.toFixed(1)}MB / ${avg.memory.total.toFixed(1)}MB`);
         
-        console.group('📈 Timing Breakdown:');
+        console.group(' Timing Breakdown:');
         for (const [category, timings] of Object.entries(avg.categories)) {
             const categoryTotal = Object.values(timings).reduce((a, b) => a + b, 0);
             const percentage = (categoryTotal / avg.frameTime) * 100;

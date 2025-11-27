@@ -1,23 +1,5 @@
 // js/world/atlasUVHelper.js
-// Phase 4: Helper functions for atlas UV transforms
-//
-// This module provides JavaScript utilities for atlas-based terrain rendering.
-// Shader code is in separate files:
-//   - WebGPU: js/renderer/shaders/webgpu/atlasUV.wgsl.js
-//   - WebGL2: js/renderer/shaders/webgl2/atlasUV.glsl.js
-//
-// The key concept: instead of sampling textures with vUv [0,1], we transform to atlas space:
-//   atlasUV = vUv * atlasUVScale + atlasUVOffset
-//
-// Where:
-//   atlasUVScale = 1.0 / chunksPerAxis (e.g., 0.0625 for 16 chunks per axis)
-//   atlasUVOffset = localChunkPosition * atlasUVScale (e.g., 0.0625 for chunk at local pos 1)
 
-/**
- * Create uniform values for atlas UV transform
- * @param {Object} uvTransform - Result from config.getChunkUVTransform() or atlasKey.getChunkUVTransform()
- * @returns {Object} Uniform values for shader
- */
 export function createAtlasUniforms(uvTransform) {
     if (!uvTransform) {
         // Legacy mode - no atlas

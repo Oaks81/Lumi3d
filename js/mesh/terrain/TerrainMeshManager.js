@@ -38,7 +38,7 @@ export class TerrainMeshManager {
             // Warn only once per chunk
             if (!this._warnedChunks) this._warnedChunks = new Set();
             if (!this._warnedChunks.has(chunkKey)) {
-                console.warn(`🔴 Missing textures for ${chunkKey}`);
+                console.warn(` Missing textures for ${chunkKey}`);
                 this._warnedChunks.add(chunkKey);
             }
             return null;

@@ -1,10 +1,5 @@
 // js/world/webgpuWorldGenerator.js
-// Phase 4: Full atlas integration with UV transforms in chunk data
-//
-// Key changes:
-// - Properly stores atlas textures in chunkData.textureRefs
-// - Includes uvTransform for shader usage
-// - Works with both atlas and legacy per-chunk modes
+
 
 import { BaseWorldGenerator } from './baseWorldGenerator.js';
 import { WebGPUTerrainGenerator } from "./webgpuTerrainGenerator.js";
@@ -308,7 +303,6 @@ export class WebGPUWorldGenerator extends BaseWorldGenerator {
             this.modules.tiledTerrain.instance.dispose();
         }
         
-        // CRITICAL: Do not destroy the device if it belongs to the renderer/backend!
         if (this.device && (!this.backend || this.device !== this.backend.device)) {
             this.device.destroy();
         }

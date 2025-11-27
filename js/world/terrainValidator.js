@@ -5,7 +5,7 @@ export class TerrainValidator {
     }
 
     async validateChunk(chunkX, chunkY, tolerance = 0.001) {
-        console.log(`🔍 Validating chunk ${chunkX},${chunkY}...`);
+        console.log(` Validating chunk ${chunkX},${chunkY}...`);
         console.log("a", this.webgl2, this.webgpu);
         // Generate using WebGL2
         const gl2ChunkData = { tiles: null, heights: null };
@@ -42,10 +42,10 @@ export class TerrainValidator {
         
         // Report results
         if (heightErrors.length === 0 && tileErrors.length === 0) {
-            console.log(`✅ Chunk ${chunkX},${chunkY} validated successfully!`);
+            console.log(` Chunk ${chunkX},${chunkY} validated successfully!`);
             return true;
         } else {
-            console.error(`❌ Chunk ${chunkX},${chunkY} validation failed!`);
+            console.error(`Chunk ${chunkX},${chunkY} validation failed!`);
             console.error(`   Height errors: ${heightErrors.length}`);
             if (heightErrors.length > 0 && heightErrors.length <= 10) {
                 heightErrors.forEach(e => {
@@ -72,7 +72,7 @@ export class TerrainValidator {
         }
         
         const passed = results.filter(r => r.valid).length;
-        console.log(`\n📊 Validation complete: ${passed}/${results.length} chunks passed`);
+        console.log(`\n Validation complete: ${passed}/${results.length} chunks passed`);
         return passed === results.length;
     }
 }

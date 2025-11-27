@@ -90,11 +90,8 @@ export class GameEngine {
             throw new Error(`Invalid chunkSize: ${this.chunkSize}`);
         }
     
-        // ============================================
-        // PLANETARY CONFIGURATION
-        // Set usePlanetaryMode to false for flat terrain
-        // ============================================
-        const usePlanetaryMode = true; // ✅ Set to false for flat terrain
+
+        const usePlanetaryMode = true; 
         
         if (usePlanetaryMode) {
             this.planetConfig = PlanetConfig.createSmallMoon({ 
@@ -111,13 +108,10 @@ export class GameEngine {
                 originZ: 0,
             });
         
-            // Create altitude zone manager
+
             this.altitudeZoneManager = new AltitudeZoneManager(this.planetConfig);
-            
-            // CRITICAL: Store in planetConfig for dependency injection
+    
             this.planetConfig.altitudeZoneManager = this.altitudeZoneManager;
-            
-            // Create spherical mapper
             this.sphericalMapper = new SphericalChunkMapper(this.planetConfig, 16);
         } else {
             console.log('🗺️ Using FLAT TERRAIN mode (no planetary projection)');
@@ -143,8 +137,7 @@ export class GameEngine {
     
         const actualApiName = this.renderer.getBackendType();
         console.log(`Renderer initialized with ${actualApiName} backend`);
-    
-        // STEP 2: Create texture manager AFTER backend exists
+
         let gpuDevice = null;
         if (actualApiName === 'webgpu') {
             gpuDevice = this.renderer.backend.device;
@@ -152,10 +145,9 @@ export class GameEngine {
     
         this.textureManager = new TextureAtlasManager(true, actualApiName, gpuDevice);
         this.textureManager.backend = this.renderer.backend;  
-        // STEP 3: Set texture manager on renderer
+
         this.renderer.textureManager = this.textureManager;
-    
-        // STEP 4: Initialize texture atlases
+
         console.log('Initializing texture atlases...');
         await this.textureManager.initializeAtlases(true);
         console.log('Texture atlases loaded');
@@ -201,10 +193,9 @@ for (const keyStr of testKeys) {
 
 console.log('=== TextureAtlasKey tests complete ===\n');
     
-        // STEP 5: NOW initialize chunk loader (which needs texture manager)
+   
         await this.renderer.initializeChunkLoader();
-    
-        // World generator setup
+
         const useWebGPUWorldGen = true;
     
         if (useWebGPUWorldGen && 'gpu' in navigator) {
@@ -317,12 +308,7 @@ console.log('=== TextureAtlasKey tests complete ===\n');
         console.log('Game engine stopped');
     }
 
-// js/GameEngine.js - SIMPLIFIED update() method
 
-/**
- * Main game loop update
- * @param {number} deltaTime - Time since last frame in seconds
- */
 update(deltaTime) {
     if (!this.isGameActive) return;
     deltaTime = Math.min(deltaTime, 0.1);
@@ -412,57 +398,6 @@ update(deltaTime) {
         cameraGameZ    // Game Z (altitude) ← UP!
     );
 
-    // ============================================
-    // DEBUG LOGGING (every 60 frames)
-    // ============================================
-  /*  if (!this._debugFrame) this._debugFrame = 0;
-    this._debugFrame++;
-    
-    if (this._debugFrame % 60 === 0) {
-        const distanceFromOrigin = cameraPos.length();
-        const expectedDistance = this.planetConfig ? 
-            (this.planetConfig.radius + 100) : 
-            100;
-        const distanceDelta = Math.abs(distanceFromOrigin - expectedDistance);
-        
-        console.log(`🔍 Debug Frame ${this._debugFrame}:`, {
-            spaceship: {
-                gameCoords: {
-                    x: this.spaceship.position.x.toFixed(1),
-                    y: this.spaceship.position.y.toFixed(1),
-                    z: this.spaceship.position.z.toFixed(1)
-                },
-                state: this.spaceship.state,
-                speed: this.spaceship.speed.toFixed(1)
-            },
-            camera: {
-                threeCoords: {
-                    x: cameraPos.x.toFixed(1),
-                    y: cameraPos.y.toFixed(1),
-                    z: cameraPos.z.toFixed(1)
-                },
-                distanceFromOrigin: distanceFromOrigin.toFixed(1),
-                expectedDistance: expectedDistance.toFixed(1),
-                delta: distanceDelta.toFixed(1),
-                status: distanceDelta < 1000 ? '✅ OK' : '❌ WRONG'
-            },
-            terrain: {
-                heightAtShip: terrainHeight.toFixed(2),
-                loadedChunks: this.chunkManager.loadedChunks.size,
-                mode: this.chunkManager.useSphericalProjection ? 'spherical' : 'flat'
-            },
-            altitude: this.altitudeZoneManager ? {
-                zone: this.altitudeZoneManager.currentZone,
-                altitude: this.altitudeZoneManager.altitude.toFixed(0),
-                terrainBlend: (this.altitudeZoneManager.terrainBlend * 100).toFixed(0) + '%',
-                orbitalBlend: (this.altitudeZoneManager.orbitalBlend * 100).toFixed(0) + '%'
-            } : null
-        });
-    }*/
-
-    // ============================================
-    // UPDATE GAME STATE
-    // ============================================
     this.gameState = {
         time: performance.now(),
         player: this.spaceship,
@@ -491,7 +426,7 @@ update(deltaTime) {
 // js/GameEngine.js
 
 getTerrainHeightAt(gameX, gameY, gameZ = null) {
-    // ✅ Convert to chunk coordinates (works for both modes)
+   
     const chunkSize = this.worldGenerator.chunkSize;
     const chunkX = Math.floor(gameX / chunkSize);
     const chunkY = Math.floor(gameY / chunkSize);
@@ -506,8 +441,7 @@ getTerrainHeightAt(gameX, gameY, gameZ = null) {
         }
         return 0;
     }
-    
-    // ✅ Get local coordinates
+
     const localX = gameX - (chunkX * chunkSize);
     const localY = gameY - (chunkY * chunkSize);
     

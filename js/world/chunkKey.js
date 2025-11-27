@@ -5,14 +5,7 @@
 import { TextureAtlasKey } from './textureAtlasKey.js';
 import { DEFAULT_ATLAS_CONFIG } from './dataTextureConfiguration.js';
 
-/**
- * Unified chunk key class that handles both flat and spherical terrain modes.
- * Provides consistent conversion to TextureAtlasKey for texture caching.
- * 
- * Key formats:
- * - Flat:      "x,y"           (e.g., "17,5")
- * - Spherical: "face:x,y:lod"  (e.g., "2:17,5:0")
- */
+
 export class ChunkKey {
     /**
      * @param {number} x - Chunk X coordinate

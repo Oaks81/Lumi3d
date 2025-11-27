@@ -37,7 +37,6 @@ this.depthMaterial = new Material({
         projectionMatrix: { value: new THREE.Matrix4() }
     },
     side: 'double',
-    // ✅ Add explicit vertex layout for WebGPU
     vertexLayout: this.apiName === 'webgpu' ? [
         {
             arrayStride: 12,
@@ -56,7 +55,6 @@ this.instancedDepthMaterial = new Material({
         projectionMatrix: { value: new THREE.Matrix4() }
     },
     side: 'double',
-    // ✅ Add instanced layout
     vertexLayout: this.apiName === 'webgpu' ? [
         // Position
         {

@@ -109,8 +109,8 @@ export class TerrainGeometryBuilder {
         // Validate height data exists
         const heightData = chunkData.heightData || chunkData.heights;
         if (!heightData) {
-            console.error('❌ No heightData available for heightmap geometry');
-            console.warn('⚠️ Falling back to flat grid');
+            console.error(' No heightData available for heightmap geometry');
+            console.warn(' Falling back to flat grid');
             return this.buildFlatGrid(chunkData, offsetX, offsetZ, lodLevel);
         }
         

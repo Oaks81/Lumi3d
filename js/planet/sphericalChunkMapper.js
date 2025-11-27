@@ -67,7 +67,7 @@ export class SphericalChunkMapper {
         return results;
     }
 
-    // CRITICAL FIX: Precision tile lookup
+   
     getFaceAndLocalCoords(input) {
         // Handle Vector3 Input (Precise)
         if (input instanceof THREE.Vector3) {

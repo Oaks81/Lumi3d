@@ -4,16 +4,7 @@
 
 import { DataTextureConfig, DEFAULT_ATLAS_CONFIG } from './dataTextureConfiguration.js';
 
-/**
- * Identifies a specific texture atlas by grid coordinates.
- * 
- * Key format examples (suffix comes from config.textureSize):
- * - Flat terrain:      "atlas_1,0_2048"     (atlas at grid 1,0, textureSize=2048)
- * - Flat with 512:     "atlas_1,0_512"      (atlas at grid 1,0, textureSize=512)
- * - Spherical face 2:  "atlas_f2_1,0_2048"  (face 2, atlas at grid 1,0, textureSize=2048)
- * 
- * Each atlas covers chunksPerAxis x chunksPerAxis chunks.
- */
+
 export class TextureAtlasKey {
     /**
      * @param {number} atlasX - Atlas grid X coordinate
@@ -53,8 +44,7 @@ export class TextureAtlasKey {
      * Generate string key for cache lookups.
      * Format: "atlas_X,Y_SIZE" or "atlas_fF_X,Y_SIZE" for spherical
      * 
-     * IMPORTANT: The suffix (e.g. _2048) comes from this.config.textureSize
-     * so it will change based on configuration.
+
      */
     toString() {
         // The suffix is DYNAMIC - it uses this.config.textureSize

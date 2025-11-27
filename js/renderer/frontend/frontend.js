@@ -171,14 +171,14 @@ export class Frontend {
     
         console.log('Initializing MasterChunkLoader with textureManager...');
     
-        // CRITICAL: Pass altitudeZoneManager via constructor
+       
         this.masterChunkLoader = new MasterChunkLoader(
             this.backend,
             this.textureManager,
             this.textureCache,
             this.uniformManager,
             this.lodManager,
-            this.planetConfig?.altitudeZoneManager || null,  // NEW: Inject here
+            this.planetConfig?.altitudeZoneManager || null, 
             this.chunkSize,
             100
         );
@@ -197,8 +197,7 @@ export class Frontend {
         if (this.uniformManager) {
             this.uniformManager.currentEnvironmentState = environmentState;
         }
-    
-        // FIXED: No altitudeZoneManager parameter (uses injected one)
+
         await this.masterChunkLoader.update(
             this.camera.position,
             gameState.terrain,
@@ -284,9 +283,7 @@ export class Frontend {
         this.uniformManager.uniforms.sunLightColor.value.set(0xffffff);
         this.uniformManager.uniforms.sunLightDirection.value.set(0.5, 1.0, 0.3).normalize();
     
-        // ============================================
-        // OPTIONAL: Only create orbital sphere if planet config exists
-        // ============================================
+
         if (this.planetConfig) {
             const { OrbitalSphereRenderer } = await import('../orbitalSphereRenderer.js');
             this.orbitalSphereRenderer = new OrbitalSphereRenderer(
@@ -294,9 +291,9 @@ export class Frontend {
                 this.planetConfig
             );
             await this.orbitalSphereRenderer.initialize();
-            console.log('✅ OrbitalSphereRenderer initialized');
+            console.log('OrbitalSphereRenderer initialized');
         } else {
-            console.log('⏭️ Skipping OrbitalSphereRenderer (flat terrain mode)');
+            console.log('⏭Skipping OrbitalSphereRenderer (flat terrain mode)');
             this.orbitalSphereRenderer = null;
         }
         
@@ -337,9 +334,7 @@ export class Frontend {
         this.backend.setClearColor(0.0, 0.0, 0.0, 1.0);
         this.backend.clear(true, true, false);
     
-        // ============================================
-        // OPTIONAL: Only render orbital sphere if it exists
-        // ============================================
+
         if (this.orbitalSphereRenderer && gameState.altitudeZoneManager) {
             this.orbitalSphereRenderer.update(
                 this.camera,
@@ -368,7 +363,7 @@ export class Frontend {
         const terrainMeshManager = this.masterChunkLoader.terrainMeshManager;
 
         if (this.frameCount === 1) {
-            console.log('🎨 renderTerrain() called');
+            console.log(' renderTerrain() called');
             console.log('  Camera position:', this.camera.position);
             console.log('  Mesh count:', terrainMeshManager.chunkMeshes.size);
             
@@ -431,7 +426,7 @@ export class Frontend {
             }
         }
     
-        // Log first frame in detail
+
         if (this.frameCount === 1) {
             console.log(' First render:', {
                 totalMeshes: terrainMeshManager.chunkMeshes.size,
@@ -452,7 +447,7 @@ export class Frontend {
     }
 
     dispose() {
-        // CHANGED: Use MasterChunkLoader's cleanup
+
         this.masterChunkLoader.cleanupAll();
         this.lightManager.cleanup();
         this.shadowRenderer.cleanup();

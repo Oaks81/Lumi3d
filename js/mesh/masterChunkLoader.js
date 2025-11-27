@@ -112,22 +112,17 @@ export class MasterChunkLoader {
     }
 
     queueChunkOperations(cameraPosition, terrain) {
-        // NOTE: Input 'terrain' is the Map<string, ChunkData> from ChunkManager
-        
-        // Identify which chunks *should* be visible
+
         const visibleChunkKeys = new Set(terrain.keys());
 
         // 1. Queue LOADS for visible chunks not yet loaded
         for (const [chunkKeyStr, chunkData] of terrain) {
             if (!this.loadedChunks.has(chunkKeyStr)) {
                 
-                // Calculate priority based on distance
-                // Note: chunkData contains .chunkX, .chunkY (and potentially spherical coordinates)
                 let distSq = 0;
                 
                 if (chunkData.isSpherical && this.altitudeZoneManager) {
-                    // Spherical distance priority is complex, simple approximation:
-                    // Just trust the ChunkManager's order or set high priority
+
                     distSq = 100; 
                 } else {
                     // Flat distance
@@ -153,7 +148,6 @@ export class MasterChunkLoader {
             }
         }
 
-        // 2. Queue UNLOADS for loaded chunks no longer in visible set
         for (const loadedKey of this.loadedChunks.keys()) {
             if (!visibleChunkKeys.has(loadedKey)) {
                 this.loadQueue.queueUnload(loadedKey);
@@ -167,7 +161,6 @@ export class MasterChunkLoader {
         const startTime = performance.now();
         const maxTime = 8; // ms per frame budget for chunk ops
 
-        // 1. Process Unloads
         const unloads = this.loadQueue.getNextUnloads(5);
         for (const chunkKey of unloads) {
             this.unloadChunk(chunkKey);
@@ -175,14 +168,12 @@ export class MasterChunkLoader {
             if (performance.now() - startTime > maxTime) break;
         }
 
-        // 2. Process Loads
+
         if (performance.now() - startTime < maxTime) {
             const loads = this.loadQueue.getNextLoads(3);
             for (const chunkKeyStr of loads) {
                 const cached = this.chunkDataCache.get(chunkKeyStr);
-                
-                // ChunkData might be in the cache, or we might need to fetch fresh from terrain
-                // (Terrain map is the source of truth from the simulation thread)
+          
                 const chunkData = cached?.chunkData || terrain.get(chunkKeyStr);
                 const camPos = cached?.cameraPosition || { x: 0, y: 0, z: 0 };
 
@@ -222,9 +213,7 @@ export class MasterChunkLoader {
         const chunkY = keyObj.y;
         const face = keyObj.face; // null for flat
 
-        // ============================================
-        // 1. ATLAS & TEXTURE CHECK
-        // ============================================
+
         let hasTextures = false;
         let useAtlas = false;
         let atlasKey = null;
@@ -238,9 +227,7 @@ export class MasterChunkLoader {
                 // Get the Atlas Key for metadata
                 const atlasData = this.textureCache.getAtlasForChunk(chunkX, chunkY, 'height', null, face);
                 atlasKey = atlasData.atlasKey;
-                
-                // INJECT ATLAS DATA INTO CHUNK
-                // This is critical for the shader to know UV offsets
+     
                 chunkData.useAtlasMode = true;
                 chunkData.atlasKey = atlasData.atlasKey;
                 chunkData.uvTransform = atlasData.uvTransform;
@@ -258,10 +245,7 @@ export class MasterChunkLoader {
 
         if (!hasTextures) {
             // Textures not ready in cache yet (generation is async)
-            // Put back in queue? Or just skip this frame.
-            // For now, we skip and let the queue retry next frame naturally if we didn't remove it.
-            // But queue logic assumes success. Let's log warn.
-            // console.warn(`⏳ Waiting for textures: ${chunkKeyStr}`);
+
             return; 
         }
 
@@ -272,11 +256,6 @@ export class MasterChunkLoader {
         const loadStart = performance.now();
         const environmentState = this.uniformManager?.currentEnvironmentState || {};
 
-        // ============================================
-        // 2. CREATE MESH ENTRY via TerrainMeshManager
-        // ============================================
-        
-        // Ensure chunkData has coordinates set (legacy safety)
         chunkData.chunkX = chunkX;
         chunkData.chunkY = chunkY;
         if (face !== null) chunkData.face = face;
@@ -284,15 +263,10 @@ export class MasterChunkLoader {
         const meshEntry = await this.terrainMeshManager.addChunk(chunkData, environmentState);
 
         if (!meshEntry) {
-            console.error(`🔴 Failed to create mesh for ${chunkKeyStr}`);
+            console.error(`Failed to create mesh for ${chunkKeyStr}`);
             return;
         }
 
-        // ============================================
-        // 3. LOD & METADATA
-        // ============================================
-        
-        // Calculate initial LOD
         const lodLevel = this.lodManager.getLODForChunkKey(
             chunkKeyStr, 
             cameraPosition, 
@@ -312,8 +286,7 @@ export class MasterChunkLoader {
             waterMeshes
         });
 
-        // const loadTime = performance.now() - loadStart;
-        // console.log(`✅ Loaded ${chunkKeyStr} (Atlas: ${useAtlas})`);
+
     }
 
     async loadWaterFeatures(chunkKey, waterFeatures, chunkData, environmentState) {
@@ -343,16 +316,14 @@ export class MasterChunkLoader {
         // 2. Notify Managers
         const keyObj = ChunkKey.fromString(chunkKeyStr);
         
-        // Remove from Mesh Manager (this destroys the GPU buffers for the terrain quad)
-        // IMPORTANT: We pass keyObj.face so it handles spherical cleanup if needed
+   
         this.terrainMeshManager.removeChunk(keyObj.x, keyObj.y);
 
         if (this.streamedFeatureManager) {
             this.streamedFeatureManager.onTerrainChunkUnloaded(keyObj.x, keyObj.y, chunkKeyStr);
         }
         
-        // 3. Atlas Cleanup Hint
-        // Tell texture cache we are done with this chunk, so it can potentially free the atlas
+    
         if (this.textureCache.releaseChunkFromAtlas) {
             this.textureCache.releaseChunkFromAtlas(
                 keyObj.x, 

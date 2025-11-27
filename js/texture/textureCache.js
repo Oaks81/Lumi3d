@@ -1,11 +1,10 @@
 // js/texture/textureCache.js
-// Phase 3: Full atlas storage support
+
 
 import { TextureAtlasKey } from '../world/textureAtlasKey.js';
 import { DataTextureConfig, DEFAULT_ATLAS_CONFIG } from '../world/dataTextureConfiguration.js';
 
 export class TextureCache {
-    // Default to 2GB cache - each atlas is ~326MB with optimized settings
     constructor(maxSizeBytes = 2 * 1024 * 1024 * 1024) {
         this.cache = new Map();
         this.maxSizeBytes = maxSizeBytes;
@@ -37,12 +36,6 @@ export class TextureCache {
         console.log('[TextureCache] Atlas config set: ' + config.textureSize + 'x' + config.textureSize + ', ' + config.chunksPerAxis + ' chunks per axis');
     }
 
-    /**
-     * Generate cache key from various input types.
-     * Supports:
-     * - TextureAtlasKey object
-     * - Legacy chunk coordinates (chunkX, chunkY)
-     */
     makeKey(textureXOrAtlasKey, textureY, type) {
         // Support TextureAtlasKey objects
         if (textureXOrAtlasKey instanceof TextureAtlasKey) {

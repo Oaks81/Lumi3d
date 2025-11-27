@@ -70,11 +70,11 @@ export class TextureAtlasManager {
 
     set backend(value) {
         this._backend = value;
-        console.log(`✅ Backend set on TextureAtlasManager (${this.apiName})`);
+        console.log(` Backend set on TextureAtlasManager (${this.apiName})`);
         
         // If lookup tables exist but weren't uploaded, upload them now
         if (this._lookupTablesReady && this.lookupTables.tileTypeLookup && !this.lookupTables.tileTypeLookup._gpuTexture) {
-            console.log('📤 Uploading pending lookup tables...');
+            console.log(' Uploading pending lookup tables...');
             this._uploadLookupTablesToGPU();
         }
     }
@@ -161,12 +161,12 @@ export class TextureAtlasManager {
         if (this._backend) {
             this._uploadLookupTablesToGPU();
         } else {
-            console.warn('⚠️ Backend not set yet, will upload lookup tables later');
+            console.warn(' Backend not set yet, will upload lookup tables later');
         }
     }
     _uploadLookupTablesToGPU() {
         if (!this._backend) {
-            console.error('❌ Cannot upload lookup tables: no backend reference');
+            console.error('Cannot upload lookup tables: no backend reference');
             return;
         }
         
@@ -175,20 +175,20 @@ export class TextureAtlasManager {
         // Use backend's createTexture instead of direct GPU calls
         if (this.lookupTables.tileTypeLookup && !this.lookupTables.tileTypeLookup._gpuTexture) {
             this._backend.createTexture(this.lookupTables.tileTypeLookup);
-            console.log(`  ✅ tileTypeLookup (${this.lookupTables.tileTypeLookup.width}x${this.lookupTables.tileTypeLookup.height})`);
+            console.log(`   tileTypeLookup (${this.lookupTables.tileTypeLookup.width}x${this.lookupTables.tileTypeLookup.height})`);
         }
         
         if (this.lookupTables.macroTileTypeLookup && !this.lookupTables.macroTileTypeLookup._gpuTexture) {
             this._backend.createTexture(this.lookupTables.macroTileTypeLookup);
-            console.log(`  ✅ macroTileTypeLookup (${this.lookupTables.macroTileTypeLookup.width}x${this.lookupTables.macroTileTypeLookup.height})`);
+            console.log(`  macroTileTypeLookup (${this.lookupTables.macroTileTypeLookup.width}x${this.lookupTables.macroTileTypeLookup.height})`);
         }
         
         if (this.lookupTables.numVariantsTex && !this.lookupTables.numVariantsTex._gpuTexture) {
             this._backend.createTexture(this.lookupTables.numVariantsTex);
-            console.log(`  ✅ numVariantsTex (${this.lookupTables.numVariantsTex.width}x${this.lookupTables.numVariantsTex.height})`);
+            console.log(`  numVariantsTex (${this.lookupTables.numVariantsTex.width}x${this.lookupTables.numVariantsTex.height})`);
         }
         
-        console.log('✅ All lookup tables uploaded');
+        console.log('All lookup tables uploaded');
     }
     
 
@@ -617,9 +617,9 @@ export class TextureAtlasManager {
         if (this._backend) {
             console.log(`📤 Uploading ${level} atlas via backend (${atlas.canvas.width}x${atlas.canvas.height})`);
             this._backend.createTexture(atlas.texture);
-            console.log(`✅ ${level} atlas uploaded`);
+            console.log(` ${level} atlas uploaded`);
         } else {
-            console.error(`❌ No backend available for ${level} atlas upload!`);
+            console.error(` No backend available for ${level} atlas upload!`);
         }
         
     
@@ -655,11 +655,11 @@ export class TextureAtlasManager {
         
         // CRITICAL: Use backend to upload
         if (this._backend) {
-            console.log(`📤 Uploading ${level} atlas via backend`);
+            console.log(` Uploading ${level} atlas via backend`);
             this._backend.createTexture(atlas.texture);
-            console.log(`✅ ${level} atlas uploaded`);
+            console.log(` ${level} atlas uploaded`);
         } else {
-            console.error(`❌ No backend for ${level} atlas!`);
+            console.error(`No backend for ${level} atlas!`);
         }
         await this.loadTexturesForLevel(level);
         return atlas.texture;

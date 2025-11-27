@@ -85,7 +85,7 @@ export class AltitudeZoneManager {
         }
         
         if (this.previousZone !== this.currentZone) {
-            console.log(`🚀 Altitude zone changed: ${this.previousZone} → ${this.currentZone} (${this.altitude.toFixed(0)}m)`);
+            console.log(` Altitude zone changed: ${this.previousZone} → ${this.currentZone} (${this.altitude.toFixed(0)}m)`);
         }
     }
     

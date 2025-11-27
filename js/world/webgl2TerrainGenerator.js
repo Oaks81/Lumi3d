@@ -274,7 +274,7 @@ export class WebGL2TerrainGenerator {
             magFilter: TextureFilter.LINEAR
         });
 
-    console.log(`🎯 Creating normal RT for chunk (${chunkX}, ${chunkY})`);
+    console.log(` Creating normal RT for chunk (${chunkX}, ${chunkY})`);
     console.log(`   Requested: ${size}x${size}`);
     console.log(`   RT object: ${normalRT.width}x${normalRT.height}`);
     console.log(`   Texture: ${normalRT.texture.width}x${normalRT.texture.height}`);

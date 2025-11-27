@@ -21,10 +21,9 @@ export class WaterRenderer extends BaseRenderer {
                 const material = waterMesh.material;
                 if (!material || !material.uniforms) continue;
                 
-                // ✅ Update time (synchronized across all water)
+             
                 material.uniforms.time.value = this.globalTime;
                 
-                // ✅ Update environmental parameters
                 this.updateWaterUniforms(material, environmentState);
                 
                 // Distance culling
