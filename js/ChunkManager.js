@@ -23,11 +23,27 @@ export class ChunkManager {
     }
     async initialize() {
         console.log("Chunk manager initializing...");
-        // Use standard update logic to load initial chunks
-        await this.update(0, 0, 100); 
-        console.log("Chunk manager ready");
+        console.log(`  Mode: ${this.useSphericalProjection ? 'SPHERICAL' : 'FLAT'}`);
+        
+        if (this.useSphericalProjection && this.sphericalMapper) {
+            // Spherical mode: chunks load on first update() with camera position
+            console.log("  Spherical mode - waiting for camera position");
+            console.log("Chunk manager ready (spherical)");
+            return;
+        }
+        
+        // Flat mode: load initial chunks around origin
+        const promises = [];
+        for (let chunkY = -1; chunkY <= 1; chunkY++) {
+            for (let chunkX = -1; chunkX <= 1; chunkX++) {
+                const distance = Math.abs(chunkX) + Math.abs(chunkY);
+                const key = `${chunkX},${chunkY}`;
+                promises.push(this.requestChunk(key, null, 10 - distance));
+            }
+        }
+        await Promise.allSettled(promises);
+        console.log(`Chunk manager ready (flat), loaded: ${this.loadedChunks.size}`);
     }
-
 
     /**
      * Update chunk loading based on player position
@@ -49,13 +65,30 @@ export class ChunkManager {
 
 
     _updateSpherical(playerX, playerY, playerZ) {
+        // playerZ should be the altitude (game coords)
         const altitude = playerZ ?? 50;
-        const cameraRenderPos = new THREE.Vector3(playerX, altitude, playerY);
+        
+        // ✅ FIX: Ensure correct coordinate conversion
+        // Game: (x, y, z) where z = altitude
+        // Three.js: (x, y, z) where y = altitude
+        const cameraRenderPos = new THREE.Vector3(
+            playerX,    // Game X → Three X
+            altitude,   // Game Z → Three Y (altitude)
+            playerY     // Game Y → Three Z
+        );
+        
+        console.log(' Spherical update:', {
+            gameCoords: { x: playerX, y: playerY, z: altitude },
+            threeCoords: { x: cameraRenderPos.x, y: cameraRenderPos.y, z: cameraRenderPos.z },
+            distFromOrigin: cameraRenderPos.length()
+        });
         
         const chunkKeys = this.sphericalMapper.getChunksInRadius(
             cameraRenderPos, 
             this.chunkLoadRadius * this.chunkSize
         );
+        
+        console.log(`  Found ${chunkKeys.length} chunks:`, chunkKeys.slice(0, 3));
         
         this._updateChunkSet(chunkKeys);
     }
@@ -80,13 +113,20 @@ export class ChunkManager {
     }
 
 
-
     _updateChunkSet(chunkKeys) {
         const visibleSet = new Set(chunkKeys);
         
-        if (visibleSet.size === 0) return;
+        if (visibleSet.size === 0) {
+            console.warn('⚠️ No visible chunks');
+            return;
+        }
         
-        // Unload invisible chunks
+        // Debug first load
+        if (this.loadedChunks.size === 0 && chunkKeys.length > 0) {
+            console.log('🗺️ First chunk load, keys:', chunkKeys.slice(0, 3));
+        }
+        
+        // Unload chunks not in visible set
         for (const [key, chunkData] of this.loadedChunks) {
             if (!visibleSet.has(key)) {
                 this.unloadChunk(key);
@@ -96,67 +136,50 @@ export class ChunkManager {
         // Load new chunks
         for (const key of chunkKeys) {
             if (!this.loadedChunks.has(key) && !this.pendingChunks.has(key)) {
-                // FIX: Handle Spherical Keys vs Flat Keys
-                if (key.includes(':')) {
-                    // Pass the string key directly for spherical chunks
-                    this.requestChunk(key, 0); 
-                } else {
-                    // Split for flat chunks
-                    const [x, y] = key.split(',').map(Number);
-                    this.requestChunk(x, y, 0);
-                }
+       
+                this.requestChunk(key);
             }
         }
     }
-
-    async requestChunk(chunkX, chunkY, priority = 10, onReady = null) {
+    async requestChunk(chunkXOrKey, chunkY = null, priority = 10, onReady = null) {
         let chunkKey;
         
-        // Handle overload: requestChunk("face:x,y:lod", priority, onReady)
-        if (typeof chunkX === 'string' && chunkX.includes(':')) {
-            chunkKey = chunkX;
-            // Shift arguments if needed
-            if (typeof chunkY === 'number') priority = chunkY;
-            if (typeof priority === 'function') onReady = priority;
-            if (typeof chunkY === 'function') onReady = chunkY;
+
+        if (typeof chunkXOrKey === 'string') {
+            // Full key passed (either "x,y" or "face:x,y:lod")
+            chunkKey = chunkXOrKey;
+        } else if (chunkY !== null) {
+            // Legacy x, y numbers
+            chunkKey = `${chunkXOrKey},${chunkY}`;
         } else {
-            chunkKey = `${chunkX},${chunkY}`;
-        }
-    
-        if (this.loadedChunks.has(chunkKey)) {
-            if (onReady) onReady(this.loadedChunks.get(chunkKey));
-            return this.loadedChunks.get(chunkKey);
-        }
-
-        if (this.pendingChunks.has(chunkKey)) {
-            if (onReady) this._addCallback(chunkKey, onReady);
-            return this.pendingChunks.get(chunkKey);
-        }
-
-        // Check queue
-        const existingRequest = this.chunkQueue.find(req => req.chunkKey === chunkKey);
-        if (existingRequest) {
-            if (priority < existingRequest.priority) {
-                existingRequest.priority = priority;
-                this.chunkQueue.sort((a, b) => a.priority - b.priority);
-            }
-            if (onReady) this._addCallback(chunkKey, onReady);
+            console.error('requestChunk: Invalid arguments', chunkXOrKey, chunkY);
             return null;
         }
-
-        // Add to queue
-        this.chunkQueue.push({
-            chunkX,
-            chunkY,
-            chunkKey,
-            priority,
-            onReady
+        
+        // Already loaded?
+        if (this.loadedChunks.has(chunkKey)) {
+            return this.loadedChunks.get(chunkKey);
+        }
+        
+        // Already pending?
+        if (this.pendingChunks.has(chunkKey)) {
+            return null;
+        }
+        
+        // Queue for loading
+        this.chunkQueue.push({ 
+            chunkKey, 
+            priority: priority || 0,
+            onReady 
         });
-
-        this.chunkQueue.sort((a, b) => a.priority - b.priority);
+        
+        // Sort by priority (higher first)
+        this.chunkQueue.sort((a, b) => b.priority - a.priority);
+        
         this._processChunkQueue();
         return null;
     }
+    
     async _processChunkQueue() {
         if (this.isProcessing || this.chunkQueue.length === 0) return;
 

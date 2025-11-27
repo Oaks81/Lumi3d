@@ -89,10 +89,11 @@ export class GameEngine {
         if (!this.chunkSize || this.chunkSize <= 0) {
             throw new Error(`Invalid chunkSize: ${this.chunkSize}`);
         }
-    
 
-        const usePlanetaryMode = true; 
-        
+        console.log('========== RENDER DIAGNOSTIC START ==========');
+
+        const usePlanetaryMode = true;
+   
         if (usePlanetaryMode) {
             this.planetConfig = PlanetConfig.createSmallMoon({ 
                 name: 'TestPlanet',
@@ -260,7 +261,7 @@ console.log('=== TextureAtlasKey tests complete ===\n');
         await this.chunkManager.initialize();
     
         setTimeout(() => {
-            console.log('🗺️ Initial terrain state:', {
+            console.log('Initial terrain state:', {
                 loadedChunks: Array.from(this.chunkManager.loadedChunks.keys()),
                 chunk_0_0: this.chunkManager.getChunk(0, 0) ? 'exists' : 'missing',
                 sampleHeight: this.chunkManager.getChunk(0, 0)?.getHeight(32, 32),
@@ -269,6 +270,55 @@ console.log('=== TextureAtlasKey tests complete ===\n');
         }, 1000);
     
         this.camera.follow(this.spaceship);
+
+
+// After creating the camera, add:
+console.log('📷 Camera created:', {
+    position: this.camera.position,
+    fov: this.camera.fov,
+    near: this.camera.near,
+    far: this.camera.far
+});
+
+// After chunkManager.initialize(), add:
+console.log('🗺️ ChunkManager initialized:', {
+    loadedChunks: this.chunkManager.loadedChunks.size,
+    keys: Array.from(this.chunkManager.loadedChunks.keys()),
+    mode: this.chunkManager.useSphericalProjection ? 'spherical' : 'flat'
+});
+
+// After spaceship.reset(), add:
+console.log('🚀 Spaceship reset:', {
+    position: this.spaceship.position,
+    expectedAltitude: this.planetConfig ? this.planetConfig.radius + 100 : 100
+});
+
+// Check if meshes exist after first update:
+setTimeout(() => {
+    const meshManager = this.renderer?.masterChunkLoader?.terrainMeshManager;
+    console.log('🎨 Mesh check (after 1s):', {
+        meshCount: meshManager?.chunkMeshes?.size || 0,
+        meshKeys: meshManager ? Array.from(meshManager.chunkMeshes.keys()) : [],
+        textureCache: this.textureCache?.cache?.size || 0
+    });
+    
+    if (meshManager?.chunkMeshes?.size > 0) {
+        const [key, mesh] = meshManager.chunkMeshes.entries().next().value;
+        console.log('  First mesh:', {
+            key,
+            visible: mesh.visible,
+            hasGeometry: !!mesh.geometry,
+            hasMaterial: !!mesh.material,
+            vertexCount: mesh.geometry?.attributes?.get?.('position')?.count
+        });
+    }
+}, 1000);
+
+console.log('========== RENDER DIAGNOSTIC END ==========');
+    
+
+
+
         this.inputManager.start();
     
         this.isGameActive = true;
@@ -278,20 +328,21 @@ console.log('=== TextureAtlasKey tests complete ===\n');
         let spawnZ = 100;
         
         if (this.planetConfig) {
-            const surfaceAltitude = this.planetConfig.origin.y + this.planetConfig.radius;
-            spawnZ = surfaceAltitude + 100;
+
+            spawnX = 0;
+            spawnY = 0;
+            spawnZ = this.planetConfig.radius + 100;  // Just radius + height
             
-            console.log('🌍 Planetary spawn:', {
-                origin: this.planetConfig.origin,
+            console.log('Planetary spawn:', {
                 radius: this.planetConfig.radius,
-                surfaceAltitude: surfaceAltitude,
+                spawnAltitude: 100,
                 spawnZ: spawnZ
             });
         }
         this.spaceship.reset(spawnX, spawnY, spawnZ);
-        console.log('🚀 Spaceship spawned at:', this.spaceship.position);
+        console.log(' Spaceship spawned at:', this.spaceship.position);
         this.camera.follow(this.spaceship);
-        console.log('📷 Camera snapped to:', this.camera.position);
+        console.log(' Camera snapped to:', this.camera.position);
         
         this.inputManager.start();
         this.isGameActive = true;
