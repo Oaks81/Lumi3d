@@ -1,4 +1,6 @@
 //js/mesh/terrain/terrainMaterialBuilder.js
+// Phase 6: Updated with Atlas UV Transform Support
+
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.178.0/build/three.module.js';
 import { Material } from '../../renderer/resources/material.js';
 
@@ -67,7 +69,14 @@ export class TerrainMaterialBuilder {
             faceU = 0,
             faceV = 0,
             faceSize = 1.0,
-            planetConfig = { radius: 50000, origin: new THREE.Vector3(0,0,0) }
+            planetConfig = { radius: 50000, origin: new THREE.Vector3(0,0,0) },
+            // ==========================================
+            // ATLAS UV TRANSFORM OPTIONS (Phase 6)
+            // ==========================================
+            useAtlasMode = false,
+            atlasUVOffset = null,  // { x, y } or null
+            atlasUVScale = 1.0,
+            uvTransform = null     // Alternative: { offsetX, offsetY, scale }
         } = options;
 
         if (!backend) {
@@ -100,6 +109,29 @@ export class TerrainMaterialBuilder {
         console.log(' Vertex Shader (first 200 chars):\n' + vertexShader.substring(0, 200));
         console.log(' Fragment Shader (first 200 chars):\n' + fragmentShader.substring(0, 200));
         console.log(' Shader language detected:', vertexShader.includes('#version') ? ' GLSL' : ' WGSL');
+
+        // ==========================================
+        // CALCULATE ATLAS UV TRANSFORM
+        // ==========================================
+        let finalAtlasUVOffset = new THREE.Vector2(0, 0);
+        let finalAtlasUVScale = 1.0;
+        let finalUseAtlasMode = 0;
+
+        if (useAtlasMode) {
+            finalUseAtlasMode = 1;
+            
+            if (uvTransform) {
+                // Use uvTransform object (from atlasKey.getChunkUVTransform())
+                finalAtlasUVOffset.set(uvTransform.offsetX, uvTransform.offsetY);
+                finalAtlasUVScale = uvTransform.scale;
+            } else if (atlasUVOffset) {
+                // Use explicit offset/scale
+                finalAtlasUVOffset.set(atlasUVOffset.x, atlasUVOffset.y);
+                finalAtlasUVScale = atlasUVScale;
+            }
+            
+            console.log(`📍 Atlas UV: offset=(${finalAtlasUVOffset.x.toFixed(4)}, ${finalAtlasUVOffset.y.toFixed(4)}), scale=${finalAtlasUVScale.toFixed(4)}`);
+        }
 
         // ============================================
         // Build ALL uniforms
@@ -141,7 +173,7 @@ export class TerrainMaterialBuilder {
             macroTileTypeLookup: { value: lookupTables.macroTileTypeLookup },
             numVariantsTex: { value: lookupTables.numVariantsTex },
 
-            // Atlas textures
+            // Atlas textures (tile type atlases - NOT chunk data atlases)
             atlasTexture: { value: atlasTextures.micro },
             atlasTextureSize: {
                 value: new THREE.Vector2(
@@ -168,6 +200,13 @@ export class TerrainMaterialBuilder {
             currentSeason: { value: 0 },
             nextSeason: { value: 1 },
             seasonTransition: { value: 0.0 },
+
+            // ==========================================
+            // ATLAS UV TRANSFORM UNIFORMS (Phase 6)
+            // ==========================================
+            atlasUVOffset: { value: finalAtlasUVOffset },
+            atlasUVScale: { value: finalAtlasUVScale },
+            useAtlasMode: { value: finalUseAtlasMode },
         };
 
         // ============================================
@@ -242,23 +281,45 @@ export class TerrainMaterialBuilder {
             defines: {
                 USE_TILE_TEXTURE: true,
                 USE_HEIGHT_TEXTURE: true,
-                USE_NORMAL_TEXTURE: true
+                USE_NORMAL_TEXTURE: true,
+                USE_ATLAS_MODE: useAtlasMode  // Can be used in shader preprocessor
             }
         });
 
         material._apiName = apiName;
+        material._useAtlasMode = useAtlasMode;  // Store for runtime queries
 
         console.log('Material texture validation:', {
             height: `${cachedTextures.height?.width}x${cachedTextures.height?.height}`,
             normal: `${cachedTextures.normal?.width}x${cachedTextures.normal?.height}`,
             tile: `${cachedTextures.tile?.width}x${cachedTextures.tile?.height}`,
-            splatWeight: `${cachedTextures.splatWeight?.width}x${cachedTextures.splatWeight?.height}`,
+            splatData: `${cachedTextures.splatData?.width}x${cachedTextures.splatData?.height}`,
             macro: `${cachedTextures.macro?.width}x${cachedTextures.macro?.height}`,
             microAtlas: `${atlasTextures.micro?.width}x${atlasTextures.micro?.height}`,
-            macroAtlas: `${atlasTextures.macro1024?.width}x${atlasTextures.macro1024?.height}`
+            macroAtlas: `${atlasTextures.macro1024?.width}x${atlasTextures.macro1024?.height}`,
+            atlasMode: useAtlasMode,
+            atlasUVOffset: useAtlasMode ? `(${finalAtlasUVOffset.x.toFixed(4)}, ${finalAtlasUVOffset.y.toFixed(4)})` : 'N/A'
         });
 
         return material;
+    }
+
+    /**
+     * Update atlas UV transform for an existing material
+     * Call this when a chunk moves to a different atlas position
+     */
+    static updateAtlasUVTransform(material, uvTransform) {
+        if (!material || !material.uniforms) return;
+
+        if (uvTransform) {
+            material.uniforms.atlasUVOffset.value.set(uvTransform.offsetX, uvTransform.offsetY);
+            material.uniforms.atlasUVScale.value = uvTransform.scale;
+            material.uniforms.useAtlasMode.value = 1;
+        } else {
+            material.uniforms.atlasUVOffset.value.set(0, 0);
+            material.uniforms.atlasUVScale.value = 1.0;
+            material.uniforms.useAtlasMode.value = 0;
+        }
     }
 
     static _cloneUniformValue(value) {

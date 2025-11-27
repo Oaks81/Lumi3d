@@ -316,5 +316,4 @@ export class WebGPUWorldGenerator extends BaseWorldGenerator {
         this.device = null;
         this.adapter = null;
     }
-    
 }

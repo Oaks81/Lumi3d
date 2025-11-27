@@ -1,4 +1,5 @@
 // mesh/terrain/TerrainMeshManager.js
+// Phase 6: Updated with Atlas Texture Support
 
 import { TerrainGeometryBuilder } from './terrainGeometryBuilder.js';
 import { TerrainMaterialBuilder } from './terrainMaterialBuilder.js';
@@ -13,6 +14,19 @@ export class TerrainMeshManager {
         this.altitudeZoneManager = altitudeZoneManager;
 
         this.chunkMeshes = new Map();
+        
+        // Atlas configuration (can be set externally)
+        this.atlasConfig = null;
+    }
+
+    /**
+     * Set atlas configuration for texture lookup
+     * @param {DataTextureConfig} config - Atlas configuration
+     */
+    setAtlasConfig(config) {
+        this.atlasConfig = config;
+        console.log('[TerrainMeshManager] Atlas config set:', 
+            config ? `${config.textureSize}x${config.textureSize}, ${config.chunksPerAxis} chunks/axis` : 'disabled');
     }
 
     async addChunk(chunkData, environmentState) {
@@ -23,10 +37,12 @@ export class TerrainMeshManager {
             return this.chunkMeshes.get(chunkKey);
         }
 
-        // Validate textures (ALWAYS required - even for CPU height geometry)
-        const hasTextures = this._validateTextures(chunkData.chunkX, chunkData.chunkY);
-        if (!hasTextures) {
-            console.error(`🔴Missing textures for ${chunkKey}`);
+        // ==========================================
+        // ATLAS-AWARE TEXTURE VALIDATION (Phase 6)
+        // ==========================================
+        const textureInfo = this._getChunkTextures(chunkData.chunkX, chunkData.chunkY);
+        if (!textureInfo.valid) {
+            console.error(`🔴 Missing textures for ${chunkKey}`);
             return null;
         }
 
@@ -42,7 +58,8 @@ export class TerrainMeshManager {
             this.altitudeZoneManager
         );
 
-        console.log(`🔧 Creating chunk ${chunkKey} at LOD ${lodLevel}`);
+        console.log(`🔧 Creating chunk ${chunkKey} at LOD ${lodLevel}` + 
+            (textureInfo.useAtlasMode ? ` [ATLAS: ${textureInfo.atlasKey}]` : ' [PER-CHUNK]'));
 
         // Determine geometry strategy
         const useHeightTexture = this._shouldUseTextureHeights(lodLevel);
@@ -69,11 +86,12 @@ export class TerrainMeshManager {
                     `heights from ${geometry.userData.heightSource}, ` +
                     `normals from ${geometry.userData.normalSource}`);
 
-        // Create material
+        // Create material with atlas support
         const material = await this._createTerrainMaterial(
             chunkData,
             environmentState,
-            lodLevel
+            lodLevel,
+            textureInfo
         );
 
         if (!material) {
@@ -98,7 +116,11 @@ export class TerrainMeshManager {
             visible: true,
             chunkX: chunkData.chunkX,
             chunkY: chunkData.chunkY,
-            lodLevel: lodLevel
+            lodLevel: lodLevel,
+            // Atlas info for later reference
+            useAtlasMode: textureInfo.useAtlasMode,
+            atlasKey: textureInfo.atlasKey,
+            uvTransform: textureInfo.uvTransform
         };
 
         this.chunkMeshes.set(chunkKey, meshEntry);
@@ -106,6 +128,85 @@ export class TerrainMeshManager {
         console.log(`✅ Mesh created for ${chunkKey}`);
 
         return meshEntry;
+    }
+
+    /**
+     * Get textures for a chunk - tries atlas first, falls back to per-chunk
+     * @returns {Object} { valid, textures, useAtlasMode, atlasKey, uvTransform }
+     */
+    _getChunkTextures(chunkX, chunkY) {
+        const result = {
+            valid: false,
+            textures: {},
+            useAtlasMode: false,
+            atlasKey: null,
+            uvTransform: null
+        };
+
+        // ==========================================
+        // TRY ATLAS MODE FIRST
+        // ==========================================
+        if (this.atlasConfig && this.textureCache.hasAtlasForChunk) {
+            // Check if atlas exists for this chunk
+            const hasAtlas = this.textureCache.hasAtlasForChunk(chunkX, chunkY, this.atlasConfig);
+            
+            if (hasAtlas) {
+                const atlasTextures = this.textureCache.getAtlasForChunk(chunkX, chunkY, this.atlasConfig);
+                
+                if (atlasTextures && atlasTextures.height && atlasTextures.normal && atlasTextures.tile) {
+                    // Calculate UV transform for this chunk within the atlas
+                    const uvTransform = this.atlasConfig.getChunkUVTransform(chunkX, chunkY);
+                    const atlasCoords = this.atlasConfig.getAtlasCoords(chunkX, chunkY);
+                    const atlasKey = `atlas_${atlasCoords.atlasX},${atlasCoords.atlasY}_${this.atlasConfig.textureSize}`;
+                    
+                    result.valid = true;
+                    result.useAtlasMode = true;
+                    result.atlasKey = atlasKey;
+                    result.uvTransform = uvTransform;
+                    result.textures = {
+                        height: atlasTextures.height,
+                        normal: atlasTextures.normal,
+                        tile: atlasTextures.tile,
+                        splatData: atlasTextures.splatData || atlasTextures.splatWeight,
+                        macro: atlasTextures.macro
+                    };
+                    
+                    console.log(`  📦 Using atlas textures for chunk (${chunkX},${chunkY}): ${atlasKey}`);
+                    console.log(`     UV offset: (${uvTransform.offsetX.toFixed(4)}, ${uvTransform.offsetY.toFixed(4)}), scale: ${uvTransform.scale.toFixed(4)}`);
+                    
+                    return result;
+                }
+            }
+        }
+
+        // ==========================================
+        // FALL BACK TO PER-CHUNK TEXTURES
+        // ==========================================
+        const required = ['height', 'normal', 'tile'];
+        let allPresent = true;
+
+        for (const type of required) {
+            const texture = this.textureCache.get(chunkX, chunkY, type);
+            if (!texture) {
+                console.error(`❌ Missing ${type} texture for chunk ${chunkX},${chunkY}`);
+                allPresent = false;
+            } else {
+                result.textures[type] = texture;
+            }
+        }
+
+        // Optional textures
+        result.textures.splatData = this.textureCache.get(chunkX, chunkY, 'splatData') ||
+                                    this.textureCache.get(chunkX, chunkY, 'splatWeight');
+        result.textures.macro = this.textureCache.get(chunkX, chunkY, 'macro');
+
+        if (allPresent) {
+            result.valid = true;
+            result.useAtlasMode = false;
+            console.log(`  📄 Using per-chunk textures for chunk (${chunkX},${chunkY})`);
+        }
+
+        return result;
     }
 
     /**
@@ -130,29 +231,7 @@ export class TerrainMeshManager {
         return useTexture;
     }
 
-    _validateTextures(chunkX, chunkY) {
-        // CRITICAL: Textures are ALWAYS required
-        // Even if using CPU heightmap data, we still need texture versions
-        // for shader sampling (normals, tiles, splats, etc.)
-        const required = ['height', 'normal', 'tile', 'splatWeight', 'splatType'];
-
-        for (const type of required) {
-            const texture = this.textureCache.get(chunkX, chunkY, type);
-            if (!texture) {
-                console.error(`❌ Missing ${type} texture for chunk ${chunkX},${chunkY}`);
-                return false;
-            }
-
-            // Verify GPU texture exists
-            if (!texture._gpuTexture) {
-                console.warn(`⚠️ Texture ${type} not uploaded to GPU for ${chunkX},${chunkY}`);
-            }
-        }
-
-        return true;
-    }
-
-    async _createTerrainMaterial(chunkData, environmentState, lodLevel) {
+    async _createTerrainMaterial(chunkData, environmentState, lodLevel, textureInfo) {
         const atlasTextures = {
             micro: this.textureManager.getAtlasTexture('micro'),
             macro1024: this.textureManager.getAtlasTexture('macro_1024')
@@ -160,23 +239,11 @@ export class TerrainMeshManager {
 
         const lookupTables = this.textureManager.getLookupTables();
 
-        // Get cached textures (from WorldGenerator)
-        const cachedTextures = {
-            height: this.textureCache.get(chunkData.chunkX, chunkData.chunkY, 'height'),
-            normal: this.textureCache.get(chunkData.chunkX, chunkData.chunkY, 'normal'),
-            tile: this.textureCache.get(chunkData.chunkX, chunkData.chunkY, 'tile'),
-            splatWeight: this.textureCache.get(chunkData.chunkX, chunkData.chunkY, 'splatWeight'),
-            splatType: this.textureCache.get(chunkData.chunkX, chunkData.chunkY, 'splatType'),
-            splatData: this.textureCache.get(chunkData.chunkX, chunkData.chunkY, 'splatData') ||
-                       this.textureCache.get(chunkData.chunkX, chunkData.chunkY, 'splatWeight'),
-            macro: this.textureCache.get(chunkData.chunkX, chunkData.chunkY, 'macro')
-        };
-
         return await TerrainMaterialBuilder.create({
             backend: this.backend,
             atlasTextures,
             lookupTables,
-            cachedTextures,
+            cachedTextures: textureInfo.textures,
             chunkOffsetX: chunkData.chunkX * chunkData.size,
             chunkOffsetZ: chunkData.chunkY * chunkData.size,
             chunkSize: chunkData.size,
@@ -187,8 +254,32 @@ export class TerrainMeshManager {
             faceIndex: chunkData.faceIndex,
             faceU: chunkData.faceU,
             faceV: chunkData.faceV,
-            faceSize: chunkData.faceSize
+            faceSize: chunkData.faceSize,
+            // ==========================================
+            // ATLAS UV TRANSFORM (Phase 6)
+            // ==========================================
+            useAtlasMode: textureInfo.useAtlasMode,
+            uvTransform: textureInfo.uvTransform
         });
+    }
+
+    /**
+     * Update atlas UV transform for a chunk (e.g., after atlas regeneration)
+     */
+    updateChunkAtlasUV(chunkX, chunkY) {
+        const chunkKey = `${chunkX},${chunkY}`;
+        const meshEntry = this.chunkMeshes.get(chunkKey);
+        
+        if (!meshEntry || !meshEntry.useAtlasMode || !this.atlasConfig) {
+            return;
+        }
+        
+        const uvTransform = this.atlasConfig.getChunkUVTransform(chunkX, chunkY);
+        meshEntry.uvTransform = uvTransform;
+        
+        TerrainMaterialBuilder.updateAtlasUVTransform(meshEntry.material, uvTransform);
+        
+        console.log(`📍 Updated atlas UV for ${chunkKey}: offset=(${uvTransform.offsetX.toFixed(4)}, ${uvTransform.offsetY.toFixed(4)})`);
     }
 
     removeChunk(chunkX, chunkY) {
@@ -254,6 +345,44 @@ export class TerrainMeshManager {
 
     getNormalTexture(chunkX, chunkY) {
         return this.textureCache.get(chunkX, chunkY, 'normal');
+    }
+
+    /**
+     * Get statistics about mesh management
+     */
+    getStats() {
+        let atlasChunks = 0;
+        let perChunkChunks = 0;
+        const atlasUsage = new Map();
+        
+        for (const [key, entry] of this.chunkMeshes) {
+            if (entry.useAtlasMode) {
+                atlasChunks++;
+                const atlasKey = entry.atlasKey || 'unknown';
+                atlasUsage.set(atlasKey, (atlasUsage.get(atlasKey) || 0) + 1);
+            } else {
+                perChunkChunks++;
+            }
+        }
+        
+        return {
+            totalChunks: this.chunkMeshes.size,
+            atlasChunks,
+            perChunkChunks,
+            atlasUsage: Object.fromEntries(atlasUsage)
+        };
+    }
+
+    /**
+     * Debug print
+     */
+    debugPrint() {
+        const stats = this.getStats();
+        console.log('[TerrainMeshManager] === Stats ===');
+        console.log(`  Total chunks: ${stats.totalChunks}`);
+        console.log(`  Atlas mode: ${stats.atlasChunks}`);
+        console.log(`  Per-chunk mode: ${stats.perChunkChunks}`);
+        console.log('  Atlas usage:', stats.atlasUsage);
     }
 
     cleanup() {

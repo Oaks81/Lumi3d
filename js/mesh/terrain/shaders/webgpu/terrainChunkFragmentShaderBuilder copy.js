@@ -1,3 +1,6 @@
+// js/mesh/terrain/shaders/webgpu/terrainChunkFragmentShaderBuilder.js
+// Phase 6: Updated with Atlas UV Transform Support
+
 import { getClusteredLightingModule } from './clusteredLighting.js';
 
 export function getTerrainUtilityFunctions() {
@@ -152,12 +155,60 @@ fn sampleShadowMap(worldPos: vec3<f32>, normal: vec3<f32>, distanceToCamera: f32
 `;
 }
 
+// ============================================================================
+// ATLAS UV TRANSFORM FUNCTIONS
+// ============================================================================
+export function getAtlasUVFunctions() {
+    return `
+// ============================================
+// ATLAS UV TRANSFORM
+// ============================================
+// Transform chunk-local UV [0,1] to atlas UV
+// When useAtlasMode == 0: returns original UV (legacy per-chunk textures)
+// When useAtlasMode == 1: transforms to atlas subregion
+
+fn chunkToAtlasUV(chunkUV: vec2<f32>) -> vec2<f32> {
+    if (fragUniforms.useAtlasMode == 0) {
+        return chunkUV;
+    }
+    return chunkUV * fragUniforms.atlasUVScale + fragUniforms.atlasUVOffset;
+}
+
+// Sample from chunk data textures with atlas UV transform
+fn sampleHeightAtlas(uv: vec2<f32>) -> vec4<f32> {
+    let atlasUV = chunkToAtlasUV(uv);
+    return sampleRGBA32FBilinear(heightTexture, atlasUV);
+}
+
+fn sampleNormalAtlas(uv: vec2<f32>) -> vec4<f32> {
+    let atlasUV = chunkToAtlasUV(uv);
+    return sampleRGBA32FBilinear(normalTexture, atlasUV);
+}
+
+fn sampleTileAtlas(uv: vec2<f32>) -> vec4<f32> {
+    let atlasUV = chunkToAtlasUV(uv);
+    return sampleRGBA32FNearest(tileTexture, atlasUV);
+}
+
+fn sampleSplatDataAtlas(uv: vec2<f32>) -> vec4<f32> {
+    let atlasUV = chunkToAtlasUV(uv);
+    return sampleRGBA32FBilinear(splatDataMap, atlasUV);
+}
+
+fn sampleMacroMaskAtlas(uv: vec2<f32>) -> vec4<f32> {
+    let atlasUV = chunkToAtlasUV(uv);
+    return sampleRGBA32FBilinear(macroMaskTexture, atlasUV);
+}
+`;
+}
+
 export function buildTerrainChunkFragmentShader(options = {}) {
     const maxLightIndices = options.maxLightIndices || 8192;
 
     const utilFunctions = getTerrainUtilityFunctions();
     const tileFunctions = getTileSamplingFunctions();
     const shadowFunctions = getShadowSamplingFunctions();
+    const atlasUVFunctions = getAtlasUVFunctions();
     const clusteredModule = getClusteredLightingModule(maxLightIndices);
 
     return `
@@ -167,6 +218,7 @@ export function buildTerrainChunkFragmentShader(options = {}) {
 // 1 = Normals only
 // 2 = Height only
 // 3 = Tile ID only
+// 4 = Atlas UV debug (shows UV coordinates as colors)
 // ============================================
 const DEBUG_MODE: i32 = 0;
 
@@ -264,6 +316,13 @@ struct FragmentUniforms {
     shadowMatrixCascade0: mat4x4<f32>,
     shadowMatrixCascade1: mat4x4<f32>,
     shadowMatrixCascade2: mat4x4<f32>,
+
+    // ==========================================
+    // ATLAS UV TRANSFORM UNIFORMS (Phase 6)
+    // ==========================================
+    atlasUVOffset: vec2<f32>,      // Offset within atlas [0,1]
+    atlasUVScale: f32,             // Scale factor (1.0 / chunksPerAxis)
+    useAtlasMode: i32,             // 0 = per-chunk textures, 1 = atlas textures
 }
 
 struct VertexOutput {
@@ -282,7 +341,7 @@ struct VertexOutput {
 @group(1) @binding(0) var heightTexture: texture_2d<f32>;
 @group(1) @binding(1) var normalTexture: texture_2d<f32>;
 @group(1) @binding(2) var tileTexture: texture_2d<f32>;
-@group(1) @binding(3) var splatDataMap: texture_2d<f32>; // Combined map
+@group(1) @binding(3) var splatDataMap: texture_2d<f32>;
 @group(1) @binding(4) var macroMaskTexture: texture_2d<f32>;
 
 @group(2) @binding(0) var atlasTexture: texture_2d<f32>;
@@ -336,11 +395,15 @@ fn sampleRGBA32FNearest(tex: texture_2d<f32>, uv: vec2<f32>) -> vec4<f32> {
     return textureLoad(tex, clamp(coord, vec2<i32>(0), maxCoord), 0);
 }
 
+${atlasUVFunctions}
+
 // ============================================
-// NORMAL CALCULATION
+// NORMAL CALCULATION (Updated for Atlas)
 // ============================================
 fn calculateNormal(input: VertexOutput) -> vec3<f32> {
-    let normalSample = sampleRGBA32FBilinear(normalTexture, input.vUv).xyz;
+    // Use atlas-aware sampling
+    let normalSample = sampleNormalAtlas(input.vUv).xyz;
+    
     if (all(normalSample == vec3<f32>(0.0))) {
         return normalize(input.vNormal);
     }
@@ -358,7 +421,7 @@ fn calculateNormal(input: VertexOutput) -> vec3<f32> {
 }
 
 // ============================================
-// MICRO TEXTURE SAMPLING
+// MICRO TEXTURE SAMPLING (Updated for Atlas)
 // ============================================
 fn sampleMicroTexture(input: VertexOutput, activeSeason: i32) -> vec4<f32> {
     let tCoord = input.vUv * vec2<f32>(fragUniforms.chunkWidth, fragUniforms.chunkHeight);
@@ -366,8 +429,11 @@ fn sampleMicroTexture(input: VertexOutput, activeSeason: i32) -> vec4<f32> {
     let local = fract(tCoord);
     let worldTileCoord = fragUniforms.chunkOffset + tIdx;
 
+    // Calculate tile UV for sampling (still in chunk-local space for tile lookup)
     let tileUV = (tIdx + 0.5) / vec2<f32>(fragUniforms.chunkWidth, fragUniforms.chunkHeight);
-    let tileSample = sampleRGBA32FNearest(tileTexture, clamp(tileUV, vec2<f32>(0.0), vec2<f32>(1.0)));
+    
+    // Use atlas-aware tile sampling
+    let tileSample = sampleTileAtlas(clamp(tileUV, vec2<f32>(0.0), vec2<f32>(1.0)));
 
     var tileId: f32;
     if (tileSample.r > 1.0) { tileId = tileSample.r; } 
@@ -392,8 +458,13 @@ fn main(input: VertexOutput) -> @location(0) vec4<f32> {
     // Debug modes
     if (DEBUG_MODE == 1) { return vec4<f32>(N * 0.5 + 0.5, 1.0); }
     if (DEBUG_MODE == 2) {
-        let h = sampleRGBA32FBilinear(heightTexture, input.vUv).r;
+        let h = sampleHeightAtlas(input.vUv).r;
         return vec4<f32>(vec3<f32>(h/50.0), 1.0);
+    }
+    if (DEBUG_MODE == 4) {
+        // Atlas UV debug - show transformed UV as color
+        let atlasUV = chunkToAtlasUV(input.vUv);
+        return vec4<f32>(atlasUV.x, atlasUV.y, f32(fragUniforms.useAtlasMode), 1.0);
     }
     
     var activeSeason = fragUniforms.currentSeason;
@@ -406,15 +477,15 @@ fn main(input: VertexOutput) -> @location(0) vec4<f32> {
     var rgb = microSample.rgb;
     var a = microSample.a;
     
-    // Retrieve Base Tile ID in MAIN scope
+    // Retrieve Base Tile ID in MAIN scope (using atlas-aware sampling)
     let tCoordBase = input.vUv * vec2<f32>(fragUniforms.chunkWidth, fragUniforms.chunkHeight);
     let tIdxBase = floor(tCoordBase);
     let tileUVBase = (tIdxBase + 0.5) / vec2<f32>(fragUniforms.chunkWidth, fragUniforms.chunkHeight);
-    let tileSampleBase = sampleRGBA32FNearest(tileTexture, clamp(tileUVBase, vec2<f32>(0.0), vec2<f32>(1.0)));
+    let tileSampleBase = sampleTileAtlas(clamp(tileUVBase, vec2<f32>(0.0), vec2<f32>(1.0)));
     var tileId = tileSampleBase.r;
     if (tileId <= 1.0) { tileId = tileId * 255.0; }
     
-    // ========== SPLAT LAYER (MANUAL 4-NEIGHBOR BLEND) ==========
+    // ========== SPLAT LAYER (Updated for Atlas) ==========
     if ((DEBUG_MODE == 0 || DEBUG_MODE == 7 || DEBUG_MODE == 8) && 
         fragUniforms.enableSplatLayer > 0.5 && fragUniforms.geometryLOD < 2) {
 
@@ -422,12 +493,11 @@ fn main(input: VertexOutput) -> @location(0) vec4<f32> {
         let tIdx = floor(tCoord);
         let local = fract(tCoord);
         
-        // 1. Setup for Manual Bilinear Sampling
-        // Note: splatDataMap dimension is expected to be chunkWidth * 4 if splatDensity=4
-        // We need to sample 4 neighbors manually to prevent Type ID interpolation.
+        // Transform UV to atlas space for splat data sampling
+        let atlasUV = chunkToAtlasUV(input.vUv);
         
         let splatSize = vec2<f32>(textureDimensions(splatDataMap));
-        let splatCoord = input.vUv * splatSize - 0.5; // Centers texels
+        let splatCoord = atlasUV * splatSize - 0.5;
         let baseSplIdx = vec2<i32>(floor(splatCoord));
         let fracSpl = fract(splatCoord);
         let maxSplCoord = vec2<i32>(splatSize) - vec2<i32>(1);
@@ -435,24 +505,17 @@ fn main(input: VertexOutput) -> @location(0) vec4<f32> {
         var splatAccum = vec3<f32>(0.0);
         var totalSplatWeight = 0.0;
         
-        // 2. Loop through 4 nearest neighbors (0,0), (1,0), (0,1), (1,1)
         for(var sy = 0; sy < 2; sy++) {
             for(var sx = 0; sx < 2; sx++) {
                 let neighborCoord = clamp(baseSplIdx + vec2<i32>(sx, sy), vec2<i32>(0), maxSplCoord);
-                
-                // Fetch Exact Data (No Interpolation)
                 let data = textureLoad(splatDataMap, neighborCoord, 0);
-                
-                // Calculate bilinear weight for this neighbor
                 let bilinearW = (select(1.0 - fracSpl.x, fracSpl.x, sx == 1)) * (select(1.0 - fracSpl.y, fracSpl.y, sy == 1));
                 
-                // Process 2 Splats per Texel
                 let w0 = data.r;
                 let t0 = floor(data.g * 255.0 + 0.5);
                 let w1 = data.b;
                 let t1 = floor(data.a * 255.0 + 0.5);
                 
-                // Splat 1
                 if (w0 > 0.001 && t0 > 0.5 && t0 != tileId) {
                     let varIdx = pickTileVariant(fragUniforms.chunkOffset + tIdx, t0, activeSeason);
                     let uvData = lookupTileTypeUVs(t0, activeSeason, varIdx);
@@ -464,7 +527,6 @@ fn main(input: VertexOutput) -> @location(0) vec4<f32> {
                     totalSplatWeight += finalW;
                 }
                 
-                // Splat 2
                 if (w1 > 0.001 && t1 > 0.5 && t1 != tileId) {
                     let varIdx = pickTileVariant(fragUniforms.chunkOffset + tIdx, t1, activeSeason);
                     let uvData = lookupTileTypeUVs(t1, activeSeason, varIdx);
@@ -478,30 +540,38 @@ fn main(input: VertexOutput) -> @location(0) vec4<f32> {
             }
         }
         
-        // 3. Blend Result
         if (totalSplatWeight > 0.0) {
             let splatColor = splatAccum / totalSplatWeight;
             let fadeFactor = fragUniforms.detailFade * (1.0 - f32(fragUniforms.geometryLOD) / 3.0);
-            
-            // Note: We clamp totalSplatWeight to max 1.0, otherwise we might over-brighten
             rgb = mix(rgb, splatColor, clamp(totalSplatWeight * fadeFactor, 0.0, 1.0));
-            
-            // Update alpha/roughness if needed
             a = max(a, totalSplatWeight);
         }
     }
     
-    // ========== MACRO LAYER ==========
+    // ========== MACRO LAYER (Updated for Atlas) ==========
     if ((DEBUG_MODE == 0) && fragUniforms.enableMacroLayer > 0.5 && fragUniforms.geometryLOD == 0) {
-        let macroMask = sampleRGBA32FBilinear(macroMaskTexture, input.vUv).r;
+        let worldPos = fragUniforms.chunkOffset + input.vUv * fragUniforms.chunkWidth;
         
-        if (macroMask > 0.15) {
+        let scale = 0.035;
+        let patchNoise = octaveNoise(worldPos * scale, 4);
+        
+        let rot = mat2x2<f32>(0.866, -0.5, 0.5, 0.866);
+        let streakNoise = octaveNoise((rot * worldPos) * (scale * 1.8), 2);
+        
+        let maskPatch = 1.0 - smoothstep(-0.28, 0.28, patchNoise);
+        let maskStreak = 1.0 - smoothstep(-0.18, 0.18, streakNoise);
+        let procMask = max(maskPatch, maskStreak);
+        
+        // Use atlas-aware macro mask sampling
+        let texMask = sampleMacroMaskAtlas(input.vUv).r;
+        
+        if (texMask > 0.15) {
             let tCoord = input.vUv * vec2<f32>(fragUniforms.chunkWidth, fragUniforms.chunkHeight);
             let tIdx = floor(tCoord);
             let worldTileCoord = fragUniforms.chunkOffset + tIdx;
             let macroLocal = fract(tCoord) * fragUniforms.tileScale;
             
-            var macroTileId = tileId; // Re-use the tileId we fetched earlier
+            var macroTileId = tileId; 
             if (macroTileId >= 100.0) { macroTileId = macroTileId - 100.0; }
             
             if (macroTileId >= 0.5) {
@@ -510,10 +580,23 @@ fn main(input: VertexOutput) -> @location(0) vec4<f32> {
                 let macroRot = calculateRotation(worldTileCoord, macroTileId, activeSeason, 100.0);
                 let rotatedMacroLocal = rotateUV(macroLocal, macroRot);
                 
-                let level2 = sampleMacroAtlasTexture(macroUVs.xy, macroUVs.zw, rotatedMacroLocal, fragUniforms.level2AtlasTextureSize);
+                var level2 = sampleMacroAtlasTexture(macroUVs.xy, macroUVs.zw, rotatedMacroLocal, fragUniforms.level2AtlasTextureSize);
                 
-                let macroStrength = smoothstep(0.15, 0.82, macroMask) * fragUniforms.level2Blend * level2.a;
-                rgb = mix(rgb, level2.rgb, clamp(macroStrength, 0.0, 1.0));
+                let ditchScale = 1.2;
+                let ditchRot = mat2x2<f32>(0.94, -0.34, 0.34, 0.94);
+                let ditchDarken = 0.9;
+                let ditchNoise = octaveNoise((ditchRot * worldPos) * ditchScale, 3);
+                let ditchWidth = 0.015;
+                let ditchMask = 1.0 - smoothstep(-ditchWidth, ditchWidth, ditchNoise);
+                let luminanceMask = mix(1.0, ditchDarken, ditchMask);
+                level2 = vec4<f32>(level2.rgb * luminanceMask, level2.a);
+
+                var level2A = fragUniforms.level2Blend * level2.a;
+                level2A = level2A * procMask;
+                
+                if (texMask > 0.15) {
+                    rgb = mix(rgb, level2.rgb, clamp(level2A, 0.0, 1.0));
+                }
             }
         }
     }
@@ -542,9 +625,7 @@ fn main(input: VertexOutput) -> @location(0) vec4<f32> {
 
     var totalLight = directionalLight + ambient + clusteredLight;
     
-    // Player/Thunder lights...
     if (fragUniforms.lodLevel < 2) {
-         // (Shortened for brevity, use same logic as before)
          if (fragUniforms.thunderLightIntensity > 0.0) {
              totalLight += fragUniforms.thunderLightColor * fragUniforms.thunderLightIntensity * 0.5;
          }
@@ -559,7 +640,7 @@ fn main(input: VertexOutput) -> @location(0) vec4<f32> {
 
     var lit = rgb * totalLight;
     
-    var fogF = 1.0 - exp(-fragUniforms.fogDensity * input.vDistanceToCamera);
+    var fogF = 0.0;
     if (fragUniforms.currentWeather >= 1.0) { fogF = mix(fogF, min(fogF * 1.5, 1.0), fragUniforms.weatherIntensity); }
     if (fragUniforms.currentWeather >= 3.0) { fogF = mix(fogF, min(fogF * 3.0, 1.0), fragUniforms.weatherIntensity); }
 
