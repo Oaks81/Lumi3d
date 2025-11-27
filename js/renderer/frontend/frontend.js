@@ -304,6 +304,7 @@ export class Frontend {
     }
     
     async updateShadows(environmentState) {
+        return;
         if (!this.shadowRenderer) return;
 
         const shadowData = await this.shadowRenderer.renderCascades(

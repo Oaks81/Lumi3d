@@ -1,9 +1,9 @@
-
+// js/mesh/masterChunkLoader.js
 import { TerrainMeshManager } from "./terrain/TerrainMeshManager.js";
-
-import { FeatureChunkBatch } from "./props/FeatureChunkBatch.js";
 import { WaterMeshManager } from './water/WaterMeshManager.js';
 import { ChunkLoadQueue } from './chunkLoadQueue.js';
+import { ChunkKey } from '../world/chunkKey.js';
+import { TextureAtlasKey } from '../world/textureAtlasKey.js';
 
 export class MasterChunkLoader {
 
@@ -13,9 +13,8 @@ export class MasterChunkLoader {
         this.textureCache = textureCache;
         this.uniformManager = uniformManager;
         this.lodManager = lodManager;
-        this.altitudeZoneManager = altitudeZoneManager; // NEW: Injected via constructor
+        this.altitudeZoneManager = altitudeZoneManager;
         this.chunkSize = chunkSize;
-    
 
         // Initialize terrainMeshManager if we have a backend
         if (backend) {
@@ -30,7 +29,7 @@ export class MasterChunkLoader {
             this.terrainMeshManager = null;
         }
 
-        // Water mesh manager - note: terrainMeshManager might be null
+        // Water mesh manager
         this.waterMeshManager = new WaterMeshManager(
             this.terrainMeshManager,
             textureManager,
@@ -39,13 +38,9 @@ export class MasterChunkLoader {
         );
 
         this.chunkLifecycle = new Map();
-
-        // Streamed features disabled for now
-        this.streamedFeatureManager = null;
-
         this.lastCacheCleanup = 0;
         this.cacheCleanupInterval = 5000;
-        this.loadedChunks = new Map();
+        this.loadedChunks = new Map(); // Maps string key -> entry
         
         this.debugStats = {
             loadsThisSecond: 0,
@@ -81,10 +76,18 @@ export class MasterChunkLoader {
     async initialize() {
         console.log('MasterChunkLoader initialized');
     }
+
+    /**
+     * Main update loop called by Frontend
+     */
     async update(cameraPosition, terrain, deltaTime) {
+        // 1. Queue operations based on camera distance
         this.queueChunkOperations(cameraPosition, terrain);
+        
+        // 2. Process the async load/unload queues
         await this.processQueues(terrain);
         
+        // 3. Periodic cache cleanup
         const now = performance.now();
         if (now - this.lastCacheCleanup > this.cacheCleanupInterval) {
             this.cleanupCache();
@@ -92,9 +95,7 @@ export class MasterChunkLoader {
         }
     }
 
-    
     cleanupCache() {
-        // Remove stale entries from chunkDataCache
         const maxCacheAge = 30000; // 30 seconds
         const now = performance.now();
         
@@ -105,336 +106,228 @@ export class MasterChunkLoader {
             }
         }
         
-        // Log cache sizes for debugging
-        if (this.chunkDataCache.size > 50) {
+        if (this.chunkDataCache.size > 200) {
             console.warn(`Large chunkDataCache size: ${this.chunkDataCache.size}`);
         }
     }
+
     queueChunkOperations(cameraPosition, terrain) {
-        const viewDistance = 160;
-    
-        const minChunkX = Math.floor((cameraPosition.x - viewDistance) / this.chunkSize);
-        const maxChunkX = Math.ceil((cameraPosition.x + viewDistance) / this.chunkSize);
-        const minChunkZ = Math.floor((cameraPosition.z - viewDistance) / this.chunkSize);
-        const maxChunkZ = Math.ceil((cameraPosition.z + viewDistance) / this.chunkSize);
-    
-        const visibleChunks = new Set();
-    
-        for (let cx = minChunkX; cx <= maxChunkX; cx++) {
-            for (let cz = minChunkZ; cz <= maxChunkZ; cz++) {
-                const chunkKey = `${cx},${cz}`;
-                visibleChunks.add(chunkKey);
-    
-                if (!this.loadedChunks.has(chunkKey) && terrain.has(chunkKey)) {
-                    const chunkCenterX = cx * this.chunkSize + this.chunkSize / 2;
-                    const chunkCenterZ = cz * this.chunkSize + this.chunkSize / 2;
+        // NOTE: Input 'terrain' is the Map<string, ChunkData> from ChunkManager
+        
+        // Identify which chunks *should* be visible
+        const visibleChunkKeys = new Set(terrain.keys());
+
+        // 1. Queue LOADS for visible chunks not yet loaded
+        for (const [chunkKeyStr, chunkData] of terrain) {
+            if (!this.loadedChunks.has(chunkKeyStr)) {
+                
+                // Calculate priority based on distance
+                // Note: chunkData contains .chunkX, .chunkY (and potentially spherical coordinates)
+                let distSq = 0;
+                
+                if (chunkData.isSpherical && this.altitudeZoneManager) {
+                    // Spherical distance priority is complex, simple approximation:
+                    // Just trust the ChunkManager's order or set high priority
+                    distSq = 100; 
+                } else {
+                    // Flat distance
+                    const chunkCenterX = chunkData.chunkX * this.chunkSize + this.chunkSize / 2;
+                    const chunkCenterZ = chunkData.chunkY * this.chunkSize + this.chunkSize / 2;
                     const dx = chunkCenterX - cameraPosition.x;
                     const dz = chunkCenterZ - cameraPosition.z;
-                    const distSq = dx * dx + dz * dz;
-                    const priority = 1000000 / (distSq + 1);
-    
-                    this.loadQueue.queueLoad(chunkKey, priority);
-    
-                    if (!this.chunkDataCache.has(chunkKey)) {
-                        this.chunkDataCache.set(chunkKey, {
-                            chunkData: terrain.get(chunkKey),
-                            cameraPosition: cameraPosition.clone ? cameraPosition.clone() : { ...cameraPosition },
-                            timestamp: performance.now()
-                        });
-                    }
+                    distSq = dx * dx + dz * dz;
+                }
+
+                const priority = 1000000 / (distSq + 1);
+
+                this.loadQueue.queueLoad(chunkKeyStr, priority);
+
+                // Cache data needed for loading
+                if (!this.chunkDataCache.has(chunkKeyStr)) {
+                    this.chunkDataCache.set(chunkKeyStr, {
+                        chunkData: chunkData,
+                        cameraPosition: cameraPosition.clone ? cameraPosition.clone() : { ...cameraPosition },
+                        timestamp: performance.now()
+                    });
                 }
             }
         }
-    
+
+        // 2. Queue UNLOADS for loaded chunks no longer in visible set
         for (const loadedKey of this.loadedChunks.keys()) {
-            if (!visibleChunks.has(loadedKey)) {
+            if (!visibleChunkKeys.has(loadedKey)) {
                 this.loadQueue.queueUnload(loadedKey);
             }
         }
-    
+
         this.loadQueue.sortByPriority();
     }
-    
+
     async processQueues(terrain) {
         const startTime = performance.now();
-        const maxTime = 8;
-    
-        const unloads = this.loadQueue.getNextUnloads(3);
+        const maxTime = 8; // ms per frame budget for chunk ops
+
+        // 1. Process Unloads
+        const unloads = this.loadQueue.getNextUnloads(5);
         for (const chunkKey of unloads) {
             this.unloadChunk(chunkKey);
             this.debugStats.unloadsThisSecond++;
             if (performance.now() - startTime > maxTime) break;
         }
-    
+
+        // 2. Process Loads
         if (performance.now() - startTime < maxTime) {
             const loads = this.loadQueue.getNextLoads(3);
-            for (const chunkKey of loads) {
-                const cached = this.chunkDataCache.get(chunkKey);
-                if (cached) {
-                    // No altitudeZoneManager parameter needed
-                    await this.loadChunkSync(
-                        chunkKey,
-                        cached.chunkData,
-                        cached.cameraPosition
-                    );
-                    this.chunkDataCache.delete(chunkKey);
+            for (const chunkKeyStr of loads) {
+                const cached = this.chunkDataCache.get(chunkKeyStr);
+                
+                // ChunkData might be in the cache, or we might need to fetch fresh from terrain
+                // (Terrain map is the source of truth from the simulation thread)
+                const chunkData = cached?.chunkData || terrain.get(chunkKeyStr);
+                const camPos = cached?.cameraPosition || { x: 0, y: 0, z: 0 };
+
+                if (chunkData) {
+                    await this.loadChunkSync(chunkKeyStr, chunkData, camPos);
+                    this.chunkDataCache.delete(chunkKeyStr);
                     this.debugStats.loadsThisSecond++;
                 }
                 if (performance.now() - startTime > maxTime) break;
             }
         }
-    
+
+        // Debug logging
         const now = performance.now();
         if (now - this.debugStats.lastSecond > 1000) {
             if (this.debugStats.loadsThisSecond > 0 || this.debugStats.unloadsThisSecond > 0) {
-                console.log(`⚡ Chunk ops/sec: ${this.debugStats.loadsThisSecond} loads, ${this.debugStats.unloadsThisSecond} unloads`);
+                // console.log(`⚡ Chunk ops/sec: ${this.debugStats.loadsThisSecond} loads, ${this.debugStats.unloadsThisSecond} unloads`);
             }
             this.debugStats.loadsThisSecond = 0;
             this.debugStats.unloadsThisSecond = 0;
             this.debugStats.lastSecond = now;
         }
     }
-  
 
-    
-    loadWaterFeaturesSync(chunkKey, waterFeatures, chunkData, environmentState) {
-        return;
-        if (!waterFeatures || waterFeatures.length === 0) return [];
-        if (chunkData.isFullyAboveWater) return [];
-        
-        const waterMeshes = [];
-        const globalSeaLevel = 8.0;
-        
-        for (const feature of waterFeatures) {
-            const mesh = this.waterMeshManager.createWaterMeshSync(
-                feature, chunkKey, chunkData, globalSeaLevel, environmentState
-            );
-            if (mesh) {
-                this.scene.add(mesh);
-                waterMeshes.push(mesh);
+    /**
+     * Load a chunk synchronously (GPU upload happens here)
+     */
+    async loadChunkSync(chunkKeyStr, chunkData, cameraPosition) {
+        if (!chunkData) {
+            console.error(`loadChunkSync: No chunk data for ${chunkKeyStr}`);
+            return;
+        }
+
+        // Parse key to support both Flat ("x,y") and Spherical ("face:x,y:lod")
+        const keyObj = ChunkKey.fromString(chunkKeyStr);
+        const chunkX = keyObj.x;
+        const chunkY = keyObj.y;
+        const face = keyObj.face; // null for flat
+
+        // ============================================
+        // 1. ATLAS & TEXTURE CHECK
+        // ============================================
+        let hasTextures = false;
+        let useAtlas = false;
+        let atlasKey = null;
+
+        // Check for Atlas existence first (Preferred)
+        if (this.textureCache.hasAtlasForChunk) {
+            // "height" is the minimum required texture type
+            if (this.textureCache.hasAtlasForChunk(chunkX, chunkY, 'height', null, face)) {
+                hasTextures = true;
+                useAtlas = true;
+                // Get the Atlas Key for metadata
+                const atlasData = this.textureCache.getAtlasForChunk(chunkX, chunkY, 'height', null, face);
+                atlasKey = atlasData.atlasKey;
+                
+                // INJECT ATLAS DATA INTO CHUNK
+                // This is critical for the shader to know UV offsets
+                chunkData.useAtlasMode = true;
+                chunkData.atlasKey = atlasData.atlasKey;
+                chunkData.uvTransform = atlasData.uvTransform;
             }
         }
+
+        // Fallback to legacy single-texture check
+        if (!hasTextures) {
+            hasTextures = this.textureCache.get(chunkX, chunkY, 'height') &&
+                          this.textureCache.get(chunkX, chunkY, 'tile');
+            if (hasTextures) {
+                chunkData.useAtlasMode = false;
+            }
+        }
+
+        if (!hasTextures) {
+            // Textures not ready in cache yet (generation is async)
+            // Put back in queue? Or just skip this frame.
+            // For now, we skip and let the queue retry next frame naturally if we didn't remove it.
+            // But queue logic assumes success. Let's log warn.
+            // console.warn(`⏳ Waiting for textures: ${chunkKeyStr}`);
+            return; 
+        }
+
+        if (this.loadedChunks.has(chunkKeyStr)) {
+            return; // Already loaded
+        }
+
+        const loadStart = performance.now();
+        const environmentState = this.uniformManager?.currentEnvironmentState || {};
+
+        // ============================================
+        // 2. CREATE MESH ENTRY via TerrainMeshManager
+        // ============================================
         
-        return waterMeshes;
+        // Ensure chunkData has coordinates set (legacy safety)
+        chunkData.chunkX = chunkX;
+        chunkData.chunkY = chunkY;
+        if (face !== null) chunkData.face = face;
+
+        const meshEntry = await this.terrainMeshManager.addChunk(chunkData, environmentState);
+
+        if (!meshEntry) {
+            console.error(`🔴 Failed to create mesh for ${chunkKeyStr}`);
+            return;
+        }
+
+        // ============================================
+        // 3. LOD & METADATA
+        // ============================================
+        
+        // Calculate initial LOD
+        const lodLevel = this.lodManager.getLODForChunkKey(
+            chunkKeyStr, 
+            cameraPosition, 
+            this.altitudeZoneManager
+        );
+        chunkData.lodLevel = lodLevel;
+
+        // Load Water (Optional)
+        const waterMeshes = await this.loadWaterFeatures(
+            chunkKeyStr, chunkData.waterFeatures || [], chunkData, environmentState
+        );
+
+        // Store in loaded map
+        this.loadedChunks.set(chunkKeyStr, {
+            chunkData,
+            terrainFeatureBatch: null, // Features temporarily disabled for migration
+            waterMeshes
+        });
+
+        // const loadTime = performance.now() - loadStart;
+        // console.log(`✅ Loaded ${chunkKeyStr} (Atlas: ${useAtlas})`);
     }
 
     async loadWaterFeatures(chunkKey, waterFeatures, chunkData, environmentState) {
+        if (!this.waterMeshManager) return [];
         return await this.waterMeshManager.loadWaterFeatures(
             chunkKey, waterFeatures, chunkData, environmentState
         );
     }
 
-    async loadTerrainGrid(chunkKey, chunkData, environmentState) {
-        this.terrainMeshManager.addChunk(chunkData, environmentState);
-        const terrainMesh = this.terrainMeshManager.chunkMeshes.get(chunkKey);
-        if (!terrainMesh) throw new Error("Failed to load terrain mesh");
-        return terrainMesh;
-    }
+    unloadChunk(chunkKeyStr) {
+        const entry = this.loadedChunks.get(chunkKeyStr);
+        if (!entry) return;
 
-    updateEnvUniforms(environmentState) {
-        this.terrainMeshManager.updateEnvUniforms(environmentState);
-    }
-
-    async loadChunk(chunkKey, chunkData, environmentState, cameraPosition = null) {
-        // Original implementation unchanged
-        const terrainMesh = await this.loadTerrainGrid(chunkKey, chunkData, environmentState);
-
-
-/*
-        for (let feature of features) {
-            if (feature.requiresTerrainRimNormals) {
-                feature.attachTerrainAccessor(accessor);
-            }
-            const geometry = await this.featureMeshManager.getGeometryForLod(feature, 0);
-            if (geometry) featureGeometries.push(geometry);
-        }
-
-        let terrainFeatureBatch = null;
-        if (featureGeometries.length > 0) {
-            const mergedGeometry = simpleMergeGeometries(featureGeometries);
-            const mergedMaterial = terrainMesh.material.clone();
-            if (mergedMaterial.uniforms) mergedMaterial.uniforms.isFeature = { value: 1.0 };
-            terrainFeatureBatch = new THREE.Mesh(mergedGeometry, mergedMaterial);
-            terrainFeatureBatch.name = `ChunkBatchMesh[${chunkKey}]`;
-            this.scene.add(terrainFeatureBatch);
-        }
-
-        const staticFeatures = chunkData.staticFeatures ?? [];
-        for (let feature of staticFeatures) {
-            if (feature.requiresTerrainRimNormals) {
-                feature.attachTerrainAccessor(accessor);
-            }
-        }
-        const staticFeatureBatch = await this.loadStaticMeshesLOD(
-            chunkKey, staticFeatures, chunkData, environmentState
-        );
-*/
-        const waterMeshes = await this.loadWaterFeatures(
-            chunkKey, chunkData.waterFeatures || [], chunkData, environmentState
-        );
-
-        this.loadedChunks.set(chunkKey, {
-            chunkData,
-            terrainFeatureBatch,
-            staticFeatureBatch,
-            waterMeshes
-        });
-
-        return { terrainMesh, waterMeshes };
-    }
-
-    async loadStaticMeshesLOD(chunkKey, staticFeatures, chunkData, environmentState) {
-        if (!this.loadedChunks.has(chunkKey)) this.loadedChunks.set(chunkKey, {});
-        const chunkEntry = this.loadedChunks.get(chunkKey);
-
-        if (!chunkEntry.featureBatch) {
-            chunkEntry.featureBatch = new FeatureChunkBatch(this.scene);
-        }
-        const batch = chunkEntry.featureBatch;
-
-        const groupByTypeVariant = {};
-        for (const feature of staticFeatures) {
-            const type = feature.type;
-            const subtype = feature.subtype || 'default';
-            const variant = feature.variant ?? 0;
-            const key = `${type}__${subtype}__${variant}`;
-
-            if (!groupByTypeVariant[key]) groupByTypeVariant[key] = [];
-            groupByTypeVariant[key].push(feature);
-        }
-
-        const lod = chunkData.lodLevel || 0;
-        const chunkBounds = {
-            minX: chunkData.chunkX * chunkData.size,
-            minZ: chunkData.chunkY * chunkData.size,
-            maxX: (chunkData.chunkX + 1) * chunkData.size,
-            maxZ: (chunkData.chunkY + 1) * chunkData.size,
-            size: chunkData.size
-        };
-
-        const heightTexture = this.terrainMeshManager.getHeightTexture(chunkData.chunkX, chunkData.chunkY);
-        const normalTexture = this.terrainMeshManager.getNormalTexture(chunkData.chunkX, chunkData.chunkY);
-        for (const [key, group] of Object.entries(groupByTypeVariant)) {
-            if (!batch.batches[key] || !batch.batches[key][lod]) {
-                const meshOrSprite = await this.featureMeshManager.getInstancedMeshLOD(
-                    group, heightTexture, normalTexture, chunkBounds, environmentState, lod
-                );
-
-                if (meshOrSprite) {
-                    batch.addBatch(key, lod, meshOrSprite);
-                }
-            }
-
-            batch.setLod(key, lod);
-        }
-
-        return batch;
-    }
-    async loadTerrainGridSync(chunkKey, chunkData, environmentState) {
-        if (this.terrainMeshManager.chunkMeshes.has(chunkKey)) {
-            return this.terrainMeshManager.chunkMeshes.get(chunkKey);
-        }
-    
-        // 1. Get Spherical Coordinates
-        // The Mapper tells us "This is Face 2, Top-Left UV 0.25,0.25"
-        if (this.sphericalChunkMapper) {
-            const faceInfo = this.sphericalChunkMapper.getFaceAndLocalCoords(chunkKey);
-            chunkData.faceIndex = faceInfo.face;
-            chunkData.faceU = faceInfo.uMin;
-            chunkData.faceV = faceInfo.vMin;
-            chunkData.faceSize = faceInfo.uMax - faceInfo.uMin;
-        }
-
-        // 2. Create Mesh Entry (Geometry + Material)
-        // Note: TerrainMeshManager should create geometry at local 0,0 
-        // because the Vertex Shader handles the world positioning.
-        const meshEntry = await this.terrainMeshManager.addChunk(
-            chunkData, 
-            environmentState
-        );
-        
-        if (!meshEntry) {
-            console.error(`🔴 Failed to create terrain mesh for ${chunkKey}`);
-            return null;
-        }
-
-        // 3. NO SCENE ADDITION
-        // We just return the entry. Frontend iterates terrainMeshManager.chunkMeshes to draw.
-        // this.scene.add(meshEntry.mesh); <--- DELETED
-
-        return meshEntry;
-    }
-    async loadChunkSync(chunkKey, chunkData, cameraPosition) {
-        if (!chunkData) {
-            console.error(`loadChunkSync: No chunk data for ${chunkKey}`);
-            return;
-        }
-    
-        const [chunkX, chunkZ] = chunkKey.split(',').map(Number);
-        
-        if (chunkData.chunkX === undefined) chunkData.chunkX = chunkX;
-        if (chunkData.chunkY === undefined) chunkData.chunkY = chunkZ;
-    
-        const hasTextures = 
-            this.textureCache.get(chunkX, chunkZ, 'height') &&
-            this.textureCache.get(chunkX, chunkZ, 'tile') &&
-            this.textureCache.get(chunkX, chunkZ, 'splatWeight');
-        
-        if (!hasTextures) {
-            console.error(`🔴 Missing textures for ${chunkKey}`);
-            return;
-        }
-    
-        if (this.loadedChunks.has(chunkKey)) {
-            console.warn(`⚠️ ${chunkKey} already loaded`);
-            return;
-        }
-    
-        const loadStart = performance.now();
-        const environmentState = this.uniformManager?.currentEnvironmentState || {};
-    
-        // Uses injected altitudeZoneManager internally
-        const terrainMesh = await this.loadTerrainGridSync(chunkKey, chunkData, environmentState);
-        
-        if (!terrainMesh) {
-            console.error(`🔴 Failed to load terrain for ${chunkKey}`);
-            return;
-        }
-    
-        // LOD calculation uses injected altitudeZoneManager
-        const lodLevel = this.lodManager.getLODForChunkKey(
-            chunkKey, 
-            cameraPosition,
-            this.altitudeZoneManager  // Use injected instance
-        );
-        chunkData.lodLevel = lodLevel;
-    
-        this.loadedChunks.set(chunkKey, {
-            chunkData,
-            terrainFeatureBatch: null,
-            waterMeshes: []
-        });
-    
-        const loadTime = performance.now() - loadStart;
-        console.log(`✅ Loaded ${chunkKey} in ${loadTime.toFixed(1)}ms (LOD ${lodLevel})`);
-    }
-    unloadChunk(chunkKey) {
-        const lifecycle = this.chunkLifecycle.get(chunkKey) || [];
-        lifecycle.push({ 
-            event: 'UNLOAD_START', 
-            time: performance.now(),
-            hasEntry: this.loadedChunks.has(chunkKey)
-        });
-    
-        const entry = this.loadedChunks.get(chunkKey);
-        if (!entry) {
-            console.error(` UNLOAD FAILED: ${chunkKey} not in loadedChunks`);
-            console.log(`Lifecycle:`, lifecycle.slice(-5));
-            return;
-        }
-    
-    
-
+        // 1. Clean up meshes
         if (entry.featureBatch) entry.featureBatch.disposeAll();
         if (entry.terrainFeatureBatch) {
             entry.terrainFeatureBatch.geometry.dispose();
@@ -446,45 +339,41 @@ export class MasterChunkLoader {
                 waterMesh.material.dispose();
             }
         }
-    
-        const [cx, cz] = chunkKey.split(',').map(Number);
-        const terrainMesh = this.terrainMeshManager.chunkMeshes.get(chunkKey);
-        if (terrainMesh) {
 
-        } else {
-            console.warn(`No terrain mesh found for ${chunkKey} during unload`);
-        }
-    
+        // 2. Notify Managers
+        const keyObj = ChunkKey.fromString(chunkKeyStr);
+        
+        // Remove from Mesh Manager (this destroys the GPU buffers for the terrain quad)
+        // IMPORTANT: We pass keyObj.face so it handles spherical cleanup if needed
+        this.terrainMeshManager.removeChunk(keyObj.x, keyObj.y);
+
         if (this.streamedFeatureManager) {
-            this.streamedFeatureManager.onTerrainChunkUnloaded(cx, cz, chunkKey);
+            this.streamedFeatureManager.onTerrainChunkUnloaded(keyObj.x, keyObj.y, chunkKeyStr);
         }
         
-        this.loadedChunks.delete(chunkKey);
-        this.terrainMeshManager.removeChunk(cx, cz);
-    
-        lifecycle.push({ 
-            event: 'UNLOAD_COMPLETE', 
-            time: performance.now()
-        });
-    
-        // Check for rapid reload
-        const recentEvents = lifecycle.slice(-10);
-        const rapidReload = recentEvents.filter(e => 
-            e.event === 'LOAD_START' && 
-            performance.now() - e.time < 1000
-        ).length > 1;
-    
-        if (rapidReload) {
-            console.error(` RAPID RELOAD DETECTED: ${chunkKey}`);
-            console.log(`Recent events:`, recentEvents);
+        // 3. Atlas Cleanup Hint
+        // Tell texture cache we are done with this chunk, so it can potentially free the atlas
+        if (this.textureCache.releaseChunkFromAtlas) {
+            this.textureCache.releaseChunkFromAtlas(
+                keyObj.x, 
+                keyObj.y, 
+                null, // config (default)
+                keyObj.face
+            );
         }
+
+        this.loadedChunks.delete(chunkKeyStr);
     }
+
     cleanupAll() {
-        this.terrainMeshManager.cleanup();
-        this.featureMeshManager.cleanup();
-        this.streamedFeatureManager.dispose();
+        if (this.terrainMeshManager) this.terrainMeshManager.cleanup();
+        if (this.waterMeshManager) this.waterMeshManager.cleanup();
+        
+        if (this.streamedFeatureManager) this.streamedFeatureManager.dispose();
+        
         this.loadedChunks.clear();
         this.loadQueue.clear();
         this.chunkDataCache.clear();
+        console.log("MasterChunkLoader cleaned up");
     }
 }

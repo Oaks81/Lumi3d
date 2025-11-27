@@ -1,108 +1,100 @@
 // js/planet/sphericalChunkMapper.js
-
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.178.0/build/three.module.js';
 import { CubeSphereCoords } from './cubeSphereCoords.js';
-import { PlanetaryChunkAddress } from './PlanetaryChunkAddress.js';
+import { PlanetaryChunkAddress } from './planetaryChunkAddress.js';
 
 export class SphericalChunkMapper {
     constructor(planetConfig, chunksPerFace = 16) {
         this.config = planetConfig;
         this.chunksPerFace = chunksPerFace;
+        this.origin = planetConfig.origin;
+        this.radius = planetConfig.radius;
+        this.chunkSize = planetConfig.surfaceChunkSize;
     }
-    
-    /**
-     * ✅ NEW: Get PlanetaryChunkAddress from world position
-     * Returns full address including face
-     */
+
+    worldPositionToChunkKey(position) {
+        const address = this.worldPositionToChunkAddress(position);
+        return address.key;
+    }
+
     worldPositionToChunkAddress(position) {
-        const relativePos = position.clone().sub(this.config.origin);
-        const address = CubeSphereCoords.getChunkAddress(
+        const relativePos = position.clone().sub(this.origin);
+        
+        // This calculates which Cube Face and X,Y coords the position belongs to
+        const addressData = CubeSphereCoords.getChunkAddress(
             relativePos,
-            this.config.radius,
-            this.config.surfaceChunkSize,
-            this.chunksPerFace
+            this.radius,
+            this.chunkSize, // Use actual chunk size in meters
+            this.chunksPerFace 
         );
         
         return new PlanetaryChunkAddress(
-            address.face,
-            address.chunkX,
-            address.chunkY,
-            0  // LOD 0 for now
+            addressData.face,
+            addressData.chunkX,
+            addressData.chunkY,
+            0 
         );
     }
-    
-    /**
-     * ✅ MODIFIED: Get chunk keys with face information
-     * Returns keys like "0:5,3:0" (face:x,y:lod)
-     */
+
     getChunksInRadius(cameraPosition, radius) {
-        const relativePos = cameraPosition.clone().sub(this.config.origin);
-        const distance = relativePos.length();
-        
-        const minDistance = this.config.radius * 0.5;
-        if (distance < minDistance) {
-            console.warn(`⚠️ Camera too far inside planet`);
-            return [];
-        }
-        
         const centerAddress = this.worldPositionToChunkAddress(cameraPosition);
+        const radiusInChunks = Math.ceil(radius / this.chunkSize);
         
-        const chunks = [];
-        const chunkRadius = Math.ceil(radius / this.config.surfaceChunkSize) + 1;
+        const visited = new Set();
+        const results = [];
+        const queue = [{ address: centerAddress, distance: 0 }];
         
-        // Load chunks on same face
-        for (let dx = -chunkRadius; dx <= chunkRadius; dx++) {
-            for (let dy = -chunkRadius; dy <= chunkRadius; dy++) {
-                const x = centerAddress.x + dx;
-                const y = centerAddress.y + dy;
-                
-                // Bounds check
-                if (x < 0 || x >= this.chunksPerFace || 
-                    y < 0 || y >= this.chunksPerFace) {
-                    continue;
+        visited.add(centerAddress.key);
+        results.push(centerAddress.key);
+        
+        // BFS to find neighbors across cube edges
+        let head = 0;
+        while (head < queue.length) {
+            const current = queue[head++];
+            if (current.distance >= radiusInChunks) continue;
+            
+            const neighbors = current.address.getNeighbors(this.chunksPerFace);
+            
+            for (const neighbor of neighbors) {
+                const key = neighbor.key;
+                if (!visited.has(key)) {
+                    visited.add(key);
+                    results.push(key);
+                    queue.push({ address: neighbor, distance: current.distance + 1 });
                 }
-                
-                const address = new PlanetaryChunkAddress(
-                    centerAddress.face,
-                    x,
-                    y,
-                    0
-                );
-                
-                chunks.push(address.key);  // ✅ Returns "face:x,y:lod"
             }
         }
-        
-        return chunks;
-    }
-    
-
-    getChunkWorldCenter(chunkKey) {
-        const address = PlanetaryChunkAddress.fromKey(chunkKey);
-        
-        const bounds = CubeSphereCoords.getChunkWorldBounds(
-            address.face,
-            address.x,
-            address.y,
-            this.chunksPerFace,
-            this.config.radius
-        );
-        
-        return bounds.center.add(this.config.origin);
+        return results;
     }
 
-    getFaceAndLocalCoords(chunkKey) {
-        const address = PlanetaryChunkAddress.fromKey(chunkKey);
+    // CRITICAL FIX: Precision tile lookup
+    getFaceAndLocalCoords(input) {
+        // Handle Vector3 Input (Precise)
+        if (input instanceof THREE.Vector3) {
+            const relativePos = new THREE.Vector3().subVectors(input, this.origin);
+            const { face, u, v } = CubeSphereCoords.worldPositionToFaceUV(relativePos, this.radius);
+            
+            // Convert -1..1 UV to 0..chunksPerFace
+            const globalU = (u + 1) * 0.5 * this.chunksPerFace;
+            const globalV = (v + 1) * 0.5 * this.chunksPerFace;
+            
+            return {
+                face: face,
+                u: globalU - Math.floor(globalU),
+                v: globalV - Math.floor(globalV)
+            };
+        }
         
-        const uMin = (address.x / this.chunksPerFace);
-        const uMax = ((address.x + 1) / this.chunksPerFace);
-        const vMin = (address.y / this.chunksPerFace);
-        const vMax = ((address.y + 1) / this.chunksPerFace);
-        
+        // Handle String Key Input (Approximate center)
+        const address = PlanetaryChunkAddress.fromKey(input);
         return {
             face: address.face,
-            u: (uMin + uMax) * 0.5,
-            v: (vMin + vMax) * 0.5,
-            uMin, uMax, vMin, vMax
+            u: 0.5,
+            v: 0.5,
+            uMin: address.x / this.chunksPerFace,
+            uMax: (address.x + 1) / this.chunksPerFace,
+            vMin: address.y / this.chunksPerFace,
+            vMax: (address.y + 1) / this.chunksPerFace
         };
     }
 }
