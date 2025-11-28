@@ -81,7 +81,7 @@ export class WebGPUWorldGenerator extends BaseWorldGenerator {
             throw new Error('Invalid chunk coordinates: chunkX=' + chunkX + ', chunkY=' + chunkY);
         }
         
-        console.log('[WebGPUWorldGenerator] generateChunk(' + chunkX + ', ' + chunkY + ', face=' + face + ', lod=' + lod + ')');
+      //  console.log('[WebGPUWorldGenerator] generateChunk(' + chunkX + ', ' + chunkY + ', face=' + face + ', lod=' + lod + ')');
         
         // Create chunk data structure
         const chunkData = new ChunkData(chunkX, chunkY, this.chunkSize);
@@ -142,10 +142,11 @@ export class WebGPUWorldGenerator extends BaseWorldGenerator {
         chunkData.atlasKey = atlasKey;
         chunkData.uvTransform = uvTransform;
         chunkData.useAtlasMode = true;
-        
+        /*
         console.log('[WebGPUWorldGenerator] Chunk UV transform: offset=(' + 
             uvTransform.offsetX.toFixed(4) + ',' + uvTransform.offsetY.toFixed(4) + 
             '), scale=' + uvTransform.scale.toFixed(4));
+            */
         
         // Get atlas textures from cache
         const atlasTextures = this.getAtlasTexturesForChunk(chunkX, chunkY, face);
@@ -166,21 +167,19 @@ export class WebGPUWorldGenerator extends BaseWorldGenerator {
             macroTexture: atlasTextures.macro ? atlasTextures.macro.texture : null
         };
         
-        // Extract CPU-side data for gameplay (collision, etc.)
-        // This reads a subregion from the atlas
-        await this._extractChunkGameplayData(chunkData, atlasKey, chunkX, chunkY);
+        await this._extractChunkGameplayData(chunkData, atlasKey, chunkX, chunkY, face);
     }
 
     /**
      * Extract height and tile data for gameplay from atlas
      */
-    async _extractChunkGameplayData(chunkData, atlasKey, chunkX, chunkY) {
+    async _extractChunkGameplayData(chunkData, atlasKey, chunkX, chunkY, face = null) {
         // For now, populate with placeholder data
         // Full implementation would read subregion from GPU texture
         
         const terrainGen = this.modules.tiledTerrain.instance;
         if (terrainGen && terrainGen.extractChunkDataFromAtlas) {
-            const data = await terrainGen.extractChunkDataFromAtlas(atlasKey, chunkX, chunkY, this.atlasConfig);
+            const data = await terrainGen.extractChunkDataFromAtlas(atlasKey, chunkX, chunkY, this.atlasConfig, face);
             if (data) {
                 this._populateChunkDataFromExtract(chunkData, chunkX, chunkY, data.heightData, data.tileData);
                 return;

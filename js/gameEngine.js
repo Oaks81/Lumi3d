@@ -37,6 +37,68 @@ function updateCanvasResolution(canvas) {
     return { width, height, changed: false };
 }
 
+// Debug for custom WebGPU renderer
+function debugSphericalRendering() {
+    console.log("=== SPHERICAL DEBUG ===");
+    
+    const engine = window.gameEngine;
+    if (!engine) { console.log("No gameEngine"); return; }
+    
+    // 1. Camera
+    const cam = engine.camera;
+    if (cam) {
+        console.log("Camera position:", cam.position);
+        console.log("Camera target/lookAt:", cam.target || cam._target);
+        console.log("Camera near/far:", cam.near, cam.far);
+    }
+    
+    // 2. Chunk Manager
+    const cm = engine.chunkManager;
+    if (cm) {
+        console.log("Loaded chunks:", cm.loadedChunks?.size || 0);
+        const keys = Array.from(cm.loadedChunks?.keys() || []);
+        console.log("Chunk keys (first 5):", keys.slice(0, 5));
+        
+        // Check a chunk's mesh
+        if (cm.loadedChunks?.size > 0) {
+            const firstKey = keys[0];
+            const chunk = cm.loadedChunks.get(firstKey);
+            console.log("First chunk:", firstKey, chunk);
+            console.log("  Has mesh?", !!chunk?.mesh);
+            console.log("  Has textureRefs?", !!chunk?.textureRefs);
+            if (chunk?.textureRefs) {
+                console.log("  textureRefs.heightTexture:", chunk.textureRefs.heightTexture ? "SET" : "NULL");
+                console.log("  textureRefs.useAtlasMode:", chunk.textureRefs.useAtlasMode);
+                console.log("  textureRefs.uvTransform:", chunk.textureRefs.uvTransform);
+            }
+        }
+    }
+    
+    // 3. Renderer info
+    const renderer = engine.renderer;
+    if (renderer) {
+        console.log("Renderer:", renderer);
+        console.log("Render list count:", renderer.renderList?.length || renderer._renderList?.length || "unknown");
+    }
+    
+    // 4. Texture cache
+    const tc = engine.textureCache;
+    if (tc) {
+        console.log("Texture cache entries:", tc.cache?.size || 0);
+        console.log("Texture cache stats:", tc.getStats?.() || tc.stats);
+        // Show some keys
+        const cacheKeys = Array.from(tc.cache?.keys() || []);
+        console.log("Cache keys (first 10):", cacheKeys.slice(0, 10));
+    }
+    
+    // 5. Check TerrainMeshManager if exists
+    const tmm = renderer?.terrainMeshManager || renderer?.chunkLoader?.terrainMeshManager;
+    if (tmm) {
+        console.log("TerrainMeshManager:", tmm);
+        console.log("  Active meshes:", tmm.meshes?.size || tmm._meshes?.size || "unknown");
+    }
+}
+
 export class GameEngine {
     constructor(canvasId) {
         this.canvas = document.getElementById(canvasId);
@@ -46,6 +108,8 @@ export class GameEngine {
         updateCanvasResolution(this.canvas);
         this.chunkSize = 128;
         this.textureCache = new TextureCache();
+        window.gameEngine = this;
+        window.debug = debugSphericalRendering;
     }
     toggleCameraMode() {
         this.cameraMode = this.cameraMode === 'manual' ? 'follow' : 'manual';
@@ -328,15 +392,15 @@ console.log('========== RENDER DIAGNOSTIC END ==========');
         let spawnZ = 100;
         
         if (this.planetConfig) {
-
-            spawnX = 0;
-            spawnY = 0;
-            spawnZ = this.planetConfig.radius + 100;  // Just radius + height
+   
             
-            console.log('Planetary spawn:', {
-                radius: this.planetConfig.radius,
-                spawnAltitude: 100,
-                spawnZ: spawnZ
+            const spawnHeight = 100;  // Height above surface
+            spawnZ = this.planetConfig.radius + spawnHeight;
+            
+            console.log(' Planetary spawn calculation:', {
+                planetRadius: this.planetConfig.radius,
+                spawnHeight: spawnHeight,
+                calculatedSpawnZ: spawnZ
             });
         }
         this.spaceship.reset(spawnX, spawnY, spawnZ);

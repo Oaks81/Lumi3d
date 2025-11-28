@@ -40,7 +40,7 @@ export class Frontend {
             position: new THREE.Vector3(0, 50, 0),
             target: new THREE.Vector3(0, 0, 0),
             near: 0.1,
-            far: 15000,
+            far: 100000,
             fov: 75,
             aspect: canvas.width / canvas.height,
             matrixWorldInverse: new THREE.Matrix4(),
@@ -290,6 +290,10 @@ export class Frontend {
                 this.backend,
                 this.planetConfig
             );
+   
+    this.camera.far = this.planetConfig.radius * 3;  // 150000 for radius 50000
+    this.camera.near = 1.0;  // Increase near plane too for depth precision
+
             await this.orbitalSphereRenderer.initialize();
             console.log('OrbitalSphereRenderer initialized');
         } else {

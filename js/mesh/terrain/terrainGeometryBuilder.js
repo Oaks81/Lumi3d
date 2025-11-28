@@ -1,75 +1,68 @@
-// js/mesh/terrain/terrainGeometryBuilder.js
 import { Geometry } from '../../renderer/resources/geometry.js';
-import { QuadTerrainGeometryBuilder } from './quadTerrainGeometryBuilder.js';
 
 export class TerrainGeometryBuilder {
     /**
-     * Build terrain geometry with LOD and altitude awareness
-     * @param {Object} chunkData - Chunk data with heightData/heights
-     * @param {number} offsetX - World X offset
-     * @param {number} offsetZ - World Z offset
-     * @param {number} lodLevel - LOD level (0-5+)
-     * @param {boolean} useHeightTexture - If true, geometry is flat and heights come from shader
-     * @returns {Geometry}
+     * Build terrain geometry using a consistent grid approach.
+     * simplified quads have been removed to ensure proper spherical curvature.
      */
     static build(chunkData, offsetX, offsetZ, lodLevel = 0, useHeightTexture = false) {
-        // LOD 5+: Always use single quad
-        if (lodLevel >= 5) {
-            return QuadTerrainGeometryBuilder.buildQuad(chunkData, offsetX, offsetZ);
-        }
         
-        // LOD 3-4: Use subdivided quad (regardless of height source)
-        if (lodLevel >= 3) {
-            const subdivisions = lodLevel === 3 ? 8 : 4;
-            return QuadTerrainGeometryBuilder.buildSubdividedQuad(
-                chunkData, offsetX, offsetZ, subdivisions
-            );
-        }
+        // 1. Determine Grid Resolution based on LOD
+        // We ensure even the lowest LOD has enough segments to curve around the sphere.
+        const subdivisionMap = {
+            0: 64, // High detail
+            1: 32,
+            2: 16,
+            3: 16,
+            4: 8,  // Low detail, but still a grid
+            5: 8,
+            6: 8
+        };
         
-        // LOD 0-2: Detailed geometry
+        // Default to 8 if undefined
+        const segments = subdivisionMap[lodLevel] || 8;
+        
+        // 2. Build the geometry
+        // We ignore the QuadTerrainGeometryBuilder and always use the grid.
         if (useHeightTexture) {
-            // Heights will be sampled from texture in shader
-            return this.buildFlatGrid(chunkData, offsetX, offsetZ, lodLevel);
+            // Case A: Displacement Mapping (Atlas Mode)
+            // Return a FLAT grid. The Vertex Shader will read the texture and move the vertices up.
+            return this.buildFlatGrid(chunkData, segments, lodLevel);
         } else {
-            // Heights baked into vertices from CPU data
-            return this.buildFromHeightmap(chunkData, offsetX, offsetZ, lodLevel);
+            // Case B: CPU Baking
+            // Bake the height array directly into the vertex Y positions.
+            return this.buildFromHeightmap(chunkData, segments, lodLevel);
         }
     }
     
     /**
-     * Build flat grid geometry (heights from texture in shader)
-     * Used for LOD 0-2 at high altitude
+     * Builds a flat mesh (y=0).
+     * Expected: Vertex Shader applies displacement using 'heightTexture'.
      */
-    static buildFlatGrid(chunkData, offsetX, offsetZ, lodLevel) {
+    static buildFlatGrid(chunkData, segments, lodLevel) {
+        const geometry = new Geometry();
         const chunkSize = chunkData.size;
         
-        // Determine subdivisions based on LOD
-        const subdivisionMap = {
-            0: 64,  // Match heightmap detail
-            1: 32,
-            2: 16
-        };
-        const subdivisions = subdivisionMap[lodLevel] || 16;
-        
-        const geometry = new Geometry();
-        
-        const vertCount = (subdivisions + 1) * (subdivisions + 1);
+        const vertCount = (segments + 1) * (segments + 1);
         const positions = new Float32Array(vertCount * 3);
         const normals = new Float32Array(vertCount * 3);
         const uvs = new Float32Array(vertCount * 2);
         
         let vertIndex = 0;
-        for (let y = 0; y <= subdivisions; y++) {
-            for (let x = 0; x <= subdivisions; x++) {
-                const u = x / subdivisions;
-                const v = y / subdivisions;
+        
+        for (let y = 0; y <= segments; y++) {
+            for (let x = 0; x <= segments; x++) {
+                const u = x / segments;
+                const v = y / segments;
                 
-                // Flat geometry - shader will displace using height texture
-                positions[vertIndex * 3 + 0] = offsetX + u * chunkSize;
-                positions[vertIndex * 3 + 1] = 0; // Flat base
-                positions[vertIndex * 3 + 2] = offsetZ + v * chunkSize;
+                // LOCAL Coordinates (0 to chunkSize)
+                // We do NOT add offsetX/offsetZ here. The Uniform 'chunkOffset' handles that.
+                positions[vertIndex * 3 + 0] = u * chunkSize;
+                positions[vertIndex * 3 + 1] = 0; // Flat
+                positions[vertIndex * 3 + 2] = v * chunkSize;
                 
-                // Up-facing normals - shader will use normal texture
+                // Default Up Normal
+                // The spherical vertex shader must rotate this based on position
                 normals[vertIndex * 3 + 0] = 0;
                 normals[vertIndex * 3 + 1] = 1;
                 normals[vertIndex * 3 + 2] = 0;
@@ -81,7 +74,7 @@ export class TerrainGeometryBuilder {
             }
         }
         
-        const indices = this._buildGridIndices(subdivisions);
+        const indices = this._buildGridIndices(segments);
         
         geometry.setAttribute('position', positions, 3);
         geometry.setAttribute('normal', normals, 3);
@@ -91,76 +84,54 @@ export class TerrainGeometryBuilder {
         
         geometry.userData = {
             lodLevel: lodLevel,
-            subdivisions: subdivisions,
+            segments: segments,
             vertexCount: vertCount,
-            triangleCount: indices.length / 3,
-            heightSource: 'texture', // Heights from texture
-            normalSource: 'texture'  // Normals from texture
+            source: 'flat_texture'
         };
         
         return geometry;
     }
     
     /**
-     * Build geometry from CPU heightmap data
-     * Used for LOD 0-2 at low altitude (close-up detail)
+     * Builds a mesh with heights baked in from CPU data.
      */
-    static buildFromHeightmap(chunkData, offsetX, offsetZ, lodLevel = 0) {
-        // Validate height data exists
-        const heightData = chunkData.heightData || chunkData.heights;
-        if (!heightData) {
-            console.error(' No heightData available for heightmap geometry');
-            console.warn(' Falling back to flat grid');
-            return this.buildFlatGrid(chunkData, offsetX, offsetZ, lodLevel);
-        }
-        
-        const width = chunkData.width || (chunkData.size + 1);
-        const height = chunkData.height || (chunkData.size + 1);
-        const size = chunkData.size;
-        
-        // Calculate grid density based on LOD
-        const densityMap = {
-            0: 1,   // Full resolution (129x129)
-            1: 2,   // Half resolution (65x65)
-            2: 4    // Quarter resolution (33x33)
-        };
-        
-        const skipFactor = densityMap[lodLevel] || 1;
-        const gridWidth = Math.floor(width / skipFactor);
-        const gridHeight = Math.floor(height / skipFactor);
-        
+    static buildFromHeightmap(chunkData, segments, lodLevel) {
         const geometry = new Geometry();
+        const chunkSize = chunkData.size;
         
-        const vertCount = gridWidth * gridHeight;
+        // Support both naming conventions from your logs
+        const heightData = chunkData.heightData || chunkData.heights;
+        const dataWidth = chunkData.width || (chunkSize + 1);
+        const dataHeight = chunkData.height || (chunkSize + 1);
+
+        const vertCount = (segments + 1) * (segments + 1);
         const positions = new Float32Array(vertCount * 3);
         const normals = new Float32Array(vertCount * 3);
         const uvs = new Float32Array(vertCount * 2);
         
-        // Build vertices with heights from CPU data
         let vertIndex = 0;
-        for (let y = 0; y < gridHeight; y++) {
-            for (let x = 0; x < gridWidth; x++) {
-                const srcX = x * skipFactor;
-                const srcY = y * skipFactor;
+        
+        for (let y = 0; y <= segments; y++) {
+            for (let x = 0; x <= segments; x++) {
+                const u = x / segments;
+                const v = y / segments;
                 
-                const u = srcX / width;
-                const v = srcY / height;
+                // Sample height from CPU array
+                // Map 0..1 UV to 0..ArraySize
+                const sampleX = Math.floor(u * (dataWidth - 1));
+                const sampleY = Math.floor(v * (dataHeight - 1));
+                const h = this._sampleHeight(heightData, dataWidth, dataHeight, sampleX, sampleY);
+
+                // LOCAL Coordinates
+                positions[vertIndex * 3 + 0] = u * chunkSize;
+                positions[vertIndex * 3 + 1] = h;
+                positions[vertIndex * 3 + 2] = v * chunkSize;
                 
-                const worldX = offsetX + u * size;
-                const worldZ = offsetZ + v * size;
-                
-                // Sample height from CPU data
-                const h = this._sampleHeight(heightData, width, height, srcX, srcY);
-                
-                positions[vertIndex * 3 + 0] = worldX;
-                positions[vertIndex * 3 + 1] = h; // Height from CPU data
-                positions[vertIndex * 3 + 2] = worldZ;
-                
-                // Calculate normal from heightmap
-                const normal = this._calculateNormal(heightData, width, height, size, srcX, srcY, skipFactor);
-                normals[vertIndex * 3 + 0] = normal.x;
-                normals[vertIndex * 3 + 1] = normal.y;
-                normals[vertIndex * 3 + 2] = normal.z;
+                // Calculate Approx Normal from Neighbors
+                const n = this._calculateNormal(heightData, dataWidth, dataHeight, chunkSize, sampleX, sampleY);
+                normals[vertIndex * 3 + 0] = n.x;
+                normals[vertIndex * 3 + 1] = n.y;
+                normals[vertIndex * 3 + 2] = n.z;
                 
                 uvs[vertIndex * 2 + 0] = u;
                 uvs[vertIndex * 2 + 1] = v;
@@ -169,7 +140,7 @@ export class TerrainGeometryBuilder {
             }
         }
         
-        const indices = this._buildGridIndices(gridWidth - 1);
+        const indices = this._buildGridIndices(segments);
         
         geometry.setAttribute('position', positions, 3);
         geometry.setAttribute('normal', normals, 3);
@@ -179,64 +150,59 @@ export class TerrainGeometryBuilder {
         
         geometry.userData = {
             lodLevel: lodLevel,
-            gridSize: { width: gridWidth, height: gridHeight },
+            segments: segments,
             vertexCount: vertCount,
-            triangleCount: indices.length / 3,
-            skipFactor: skipFactor,
-            heightSource: 'cpu',   // Heights baked into vertices
-            normalSource: 'cpu'    // Normals calculated from heightmap
+            source: 'cpu_baked'
         };
         
         return geometry;
     }
     
-    static _sampleHeight(heightData, width, height, x, y) {
-        x = Math.max(0, Math.min(width - 1, Math.floor(x)));
-        y = Math.max(0, Math.min(height - 1, Math.floor(y)));
-        
-        const index = y * width + x;
-        return heightData[index] || 0;
+    static _sampleHeight(data, width, height, x, y) {
+        if (!data) return 0;
+        // Clamp
+        if (x < 0) x = 0; if (x >= width) x = width - 1;
+        if (y < 0) y = 0; if (y >= height) y = height - 1;
+        return data[y * width + x];
     }
-    
-    static _calculateNormal(heightData, width, height, chunkSize, x, y, step = 1) {
-        const hL = this._sampleHeight(heightData, width, height, x - step, y);
-        const hR = this._sampleHeight(heightData, width, height, x + step, y);
-        const hD = this._sampleHeight(heightData, width, height, x, y - step);
-        const hU = this._sampleHeight(heightData, width, height, x, y + step);
+
+    static _calculateNormal(data, width, height, chunkSize, x, y) {
+        if (!data) return {x:0, y:1, z:0};
         
-        const scale = (chunkSize / width) * step;
+        const hL = this._sampleHeight(data, width, height, x - 1, y);
+        const hR = this._sampleHeight(data, width, height, x + 1, y);
+        const hD = this._sampleHeight(data, width, height, x, y - 1);
+        const hU = this._sampleHeight(data, width, height, x, y + 1);
         
-        const nx = (hL - hR) / (2 * scale);
+        // Scale factor assuming 1 unit distance in array map
+        const scale = chunkSize / width; 
+        
+        const nx = (hL - hR) / (2.0 * scale);
         const ny = 1.0;
-        const nz = (hD - hU) / (2 * scale);
+        const nz = (hD - hU) / (2.0 * scale);
         
-        const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
-        
-        return {
-            x: nx / len,
-            y: ny / len,
-            z: nz / len
-        };
+        const len = Math.sqrt(nx*nx + ny*ny + nz*nz);
+        return { x: nx/len, y: ny/len, z: nz/len };
     }
     
-    static _buildGridIndices(subdivisions) {
-        const triCount = subdivisions * subdivisions * 2;
+    static _buildGridIndices(segments) {
+        const triCount = segments * segments * 2;
         const indices = new Uint32Array(triCount * 3);
         let indexOffset = 0;
         
-        for (let y = 0; y < subdivisions; y++) {
-            for (let x = 0; x < subdivisions; x++) {
-                const v00 = y * (subdivisions + 1) + x;
+        for (let y = 0; y < segments; y++) {
+            for (let x = 0; x < segments; x++) {
+                const v00 = y * (segments + 1) + x;
                 const v10 = v00 + 1;
-                const v01 = (y + 1) * (subdivisions + 1) + x;
+                const v01 = (y + 1) * (segments + 1) + x;
                 const v11 = v01 + 1;
                 
-                // Triangle 1
+                // Tri 1
                 indices[indexOffset++] = v00;
                 indices[indexOffset++] = v01;
                 indices[indexOffset++] = v10;
                 
-                // Triangle 2
+                // Tri 2
                 indices[indexOffset++] = v10;
                 indices[indexOffset++] = v01;
                 indices[indexOffset++] = v11;

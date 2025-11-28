@@ -34,10 +34,11 @@ export class TextureAtlasKey {
         this._minChunkY = atlasY * config.chunksPerAxis;
         this._maxChunkX = this._minChunkX + config.chunksPerAxis - 1;
         this._maxChunkY = this._minChunkY + config.chunksPerAxis - 1;
-        
+        /*
         console.log('[TextureAtlasKey] Created: atlas=(' + atlasX + ',' + atlasY + '), face=' + face + 
             ', covers chunks [' + this._minChunkX + '..' + this._maxChunkX + 
             ', ' + this._minChunkY + '..' + this._maxChunkY + ']');
+            */
     }
     
     /**
@@ -66,6 +67,12 @@ export class TextureAtlasKey {
      * @returns {TextureAtlasKey}
      */
     static fromChunkCoords(chunkX, chunkY, face = null, configOrTextureSize = DEFAULT_ATLAS_CONFIG, chunkSize = null) {
+        if (face === null) {
+            const stack = new Error().stack.split('\n').slice(1, 5).map(s => s.trim()).join(' <- ');
+            console.warn(`[FACE-NULL] chunk=(${chunkX},${chunkY}) CALLER: ${stack}`);
+        }
+        // ========== END DIAGNOSTIC ==========
+        
         let config;
         
         // Support both new and legacy call signatures
@@ -93,12 +100,12 @@ export class TextureAtlasKey {
         // Calculate atlas coordinates using floor division
         const atlasX = Math.floor(chunkX / config.chunksPerAxis);
         const atlasY = Math.floor(chunkY / config.chunksPerAxis);
-        
+      /*  
         console.log('[TextureAtlasKey] fromChunkCoords: chunk=(' + chunkX + ',' + chunkY + 
             ') face=' + face + ' -> atlas=(' + atlasX + ',' + atlasY + ')');
         console.log('[TextureAtlasKey]   Config: textureSize=' + config.textureSize + 
             ', chunkSize=' + config.chunkSize + ', chunksPerAxis=' + config.chunksPerAxis);
-        
+        */
         return new TextureAtlasKey(atlasX, atlasY, face, config);
     }
     

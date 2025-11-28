@@ -12,6 +12,7 @@ export class TerrainMaterialBuilder {
         let builders;
         if (apiName === 'webgpu') {
             try {
+                // Ensure these paths match your project structure
                 const vertex = await import('./shaders/webgpu/terrainChunkVertexShaderBuilder.js');
                 const fragment = await import('./shaders/webgpu/terrainChunkFragmentShaderBuilder.js');
                 builders = {
@@ -23,6 +24,7 @@ export class TerrainMaterialBuilder {
                 throw e;
             }
         } else {
+            // WebGL2 fallbacks
             const vertex = await import('./shaders/webgl2/terrainChunkVertexShaderBuilder.js');
             const fragment = await import('./shaders/webgl2/terrainChunkFragmentShaderBuilder.js');
             builders = {
@@ -46,10 +48,11 @@ export class TerrainMaterialBuilder {
             chunkSize = 128,
             environmentState = {},
             uniformManager = null,
+            // SPHERICAL PARAMS
             faceIndex = -1,
-            faceU = 0,
-            faceV = 0,
-            faceSize = 1.0,
+            faceU = 0, // This is likely integer ChunkX
+            faceV = 0, // This is likely integer ChunkY
+            faceSize = 16, // chunksPerFace (default 16)
             planetConfig = { radius: 50000, origin: new THREE.Vector3(0,0,0) },
             useAtlasMode = false,
             uvTransform = null
@@ -64,7 +67,27 @@ export class TerrainMaterialBuilder {
         const vertexShader = builders.buildTerrainChunkVertexShader();
         const fragmentShader = builders.buildTerrainChunkFragmentShader({ maxLightIndices: 8192 });
 
-        // Calculate Atlas Uniforms
+        // === CALC SPHERICAL PROJECTION UNIFORMS ===
+        let chunkLocation = new THREE.Vector2(0, 0);
+        let chunkSizeUV = 1.0;
+
+        if (faceIndex !== -1) {
+            // Convert Integer Chunk Coordinates (e.g., 7, 8) to Face UVs (e.g., 0.4375, 0.5)
+            // faceSize should be the number of chunks across a face (e.g., 16)
+            const chunksPerFace = faceSize || 16; 
+            const u = faceU / chunksPerFace; 
+            const v = faceV / chunksPerFace;
+            
+            chunkLocation.set(u, v);
+            chunkSizeUV = 1.0 / chunksPerFace;
+            
+            // Debug check (remove later)
+            if (Math.random() < 0.001) {
+               console.log(`Chunk Mat: Face ${faceIndex} (${faceU},${faceV}) -> UV ${u.toFixed(3)},${v.toFixed(3)} Scale ${chunkSizeUV}`);
+            }
+        }
+
+        // Atlas Uniforms
         let finalAtlasUVOffset = new THREE.Vector2(0, 0);
         let finalAtlasUVScale = 1.0;
         let finalUseAtlasMode = useAtlasMode ? 1 : 0;
@@ -76,10 +99,12 @@ export class TerrainMaterialBuilder {
 
         // Build Uniforms
         const uniforms = {
-            // Planet
+            // === PLANET PROJECTION ===
             planetRadius: { value: planetConfig.radius },
             planetOrigin: { value: planetConfig.origin },
             chunkFace: { value: faceIndex },
+            chunkLocation: { value: chunkLocation }, // <--- CRITICAL FOR VERTEX SHADER
+            chunkSizeUV: { value: chunkSizeUV },     // <--- CRITICAL FOR VERTEX SHADER
             
             // Standard
             chunkOffset: { value: new THREE.Vector2(chunkOffsetX, chunkOffsetZ) },
@@ -102,7 +127,7 @@ export class TerrainMaterialBuilder {
             useAtlasMode: { value: finalUseAtlasMode },
         };
 
-        // Clone Global Uniforms (Lights, Camera, etc) from UniformManager
+        // Clone Global Uniforms
         if (uniformManager && uniformManager.uniforms) {
             const keys = [
                 'modelMatrix', 'viewMatrix', 'projectionMatrix',
@@ -116,13 +141,16 @@ export class TerrainMaterialBuilder {
             }
         }
 
-        // WebGPU Layout
+        // WebGPU Layout (Matches VertexInput struct in shader)
         let vertexLayout = null;
         if (apiName === 'webgpu') {
             vertexLayout = [
-                { arrayStride: 12, stepMode: 'vertex', attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x3' }] }, // pos
-                { arrayStride: 12, stepMode: 'vertex', attributes: [{ shaderLocation: 1, offset: 0, format: 'float32x3' }] }, // norm
-                { arrayStride: 8,  stepMode: 'vertex', attributes: [{ shaderLocation: 2, offset: 0, format: 'float32x2' }] }  // uv
+                // Loc 0: Position (3x float32)
+                { arrayStride: 12, stepMode: 'vertex', attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x3' }] }, 
+                // Loc 1: Normal (3x float32)
+                { arrayStride: 12, stepMode: 'vertex', attributes: [{ shaderLocation: 1, offset: 0, format: 'float32x3' }] }, 
+                // Loc 2: UV (2x float32)
+                { arrayStride: 8,  stepMode: 'vertex', attributes: [{ shaderLocation: 2, offset: 0, format: 'float32x2' }] }  
             ];
         }
 
@@ -131,7 +159,7 @@ export class TerrainMaterialBuilder {
             vertexShader: vertexShader,
             fragmentShader: fragmentShader,
             uniforms,
-            side: 'front',
+            side: 'front', // Or 'double' if you are inside the sphere
             depthTest: true,
             depthWrite: true,
             vertexLayout: vertexLayout,

@@ -240,13 +240,10 @@ export class WebGPUTerrainGenerator {
         this.device.queue.submit([enc.finish()]);
     }
 
-    async extractChunkDataFromAtlas(atlasKey, chunkX, chunkY, config) {
-        // Implementation logic remains same as provided previously
-        // Use textureCache.getAtlasForChunk, read subregion, return {heightData, tileData}
-        // ... (Refer to previous complete code if needed, shortening for brevity)
-        // Returning null for now to prevent reference errors if you missed that block
-        const heightAtlasData = this.textureCache.getAtlasForChunk(chunkX, chunkY, 'height', config);
-        const tileAtlasData = this.textureCache.getAtlasForChunk(chunkX, chunkY, 'tile', config);
+
+    async extractChunkDataFromAtlas(atlasKey, chunkX, chunkY, config, face = null) {
+        const heightAtlasData = this.textureCache.getAtlasForChunk(chunkX, chunkY, 'height', config, face);
+        const tileAtlasData = this.textureCache.getAtlasForChunk(chunkX, chunkY, 'tile', config, face);
         
         if (!heightAtlasData || !tileAtlasData) return null;
 
