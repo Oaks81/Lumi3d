@@ -72,27 +72,31 @@ fn main(input: VertexInput) -> VertexOutput {
     let cubePoint = getCubePoint(uniforms.chunkFace, faceUV);
     let sphereDir = normalize(cubePoint);
     
-    // 3. Sample Height (Displacement)
+    // 3. Sample Height (Displacement) with mild box filter to tame moire
     var height = 0.0;
-    
-    // Calculate UV for sampling the height texture
-    var sampleUV = input.uv;
-    
-    // If using Atlas, transform the UVs (use full range so neighbors share edges)
+    var baseUV = input.uv;
     if (uniforms.useAtlasMode > 0.5) {
-        sampleUV = uniforms.atlasUVOffset + input.uv * uniforms.atlasUVScale;
+        let texSize = vec2<f32>(textureDimensions(heightTexture));
+        let halfPix = 0.5 / texSize;
+        // Stay inside the atlas slice
+        baseUV = uniforms.atlasUVOffset + clamp(input.uv, halfPix, vec2<f32>(1.0) - halfPix) * uniforms.atlasUVScale;
     }
-    
-    // Sample height (Red channel)
-    // Note: 'textureSampleLevel' is required in vertex shader (no derivatives)
-    let hSample = textureSampleLevel(heightTexture, textureSampler, sampleUV, 0.0);
-    height = hSample.r;
+    let texel = 0.5 / vec2<f32>(textureDimensions(heightTexture));
+    let offsets = array<vec2<f32>,4>(
+        vec2<f32>(-texel.x, -texel.y),
+        vec2<f32>( texel.x, -texel.y),
+        vec2<f32>(-texel.x,  texel.y),
+        vec2<f32>( texel.x,  texel.y)
+    );
+    for (var i = 0; i < 4; i = i + 1) {
+        height = height + textureSampleLevel(heightTexture, textureSampler, baseUV + offsets[i], 0.0).r;
+    }
+    height = height * 0.25;
 
     // 4. Calculate Final World Position
-    // Radius = PlanetRadius + Height * Scale (e.g., 50000 + h * 100)
-    // Assuming height is stored as actual meters or normalized 0-1 scaled later.
-    // For testing, let's assume raw meters or significant scale
-    let heightMultiplier = 1.0; 
+    // Radius = PlanetRadius + Height * Scale (e.g., 50000 + h * 50)
+    // Moderate multiplier for visible relief without exaggeration
+    let heightMultiplier = 6.0; 
     let radius = uniforms.planetRadius + (height * heightMultiplier);
     
     let worldPosition = uniforms.planetOrigin + sphereDir * radius;

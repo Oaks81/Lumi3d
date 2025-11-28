@@ -407,7 +407,7 @@ console.log('========== RENDER DIAGNOSTIC END ==========');
         if (this.planetConfig) {
    
             
-            const spawnHeight = 100;  // Height above surface
+            const spawnHeight = 1500;  // Higher start to ensure clear view above terrain relief
             spawnZ = this.planetConfig.radius + spawnHeight;
             
             console.log(' Planetary spawn calculation:', {

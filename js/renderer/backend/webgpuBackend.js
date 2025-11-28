@@ -561,6 +561,11 @@ _describeLayouts(layouts) {
             console.log('  → Orbital sphere layout');
             return this._createOrbitalSphereLayouts();
         }
+
+        // Custom layout spec (e.g., instanced debug)
+        if (material.bindGroupLayoutSpec) {
+            return this._buildLayoutsFromSpec(material.bindGroupLayoutSpec);
+        }
         
         // Fallback: Check shader content
         const shaderContent = (material.fragmentShader || '').toLowerCase();
@@ -587,22 +592,31 @@ _describeLayouts(layouts) {
         }));
         const chunkEntries = [
             {
-                binding: 0, // Height Texture
+                binding: 0, // Height Texture (RGBA16F filterable)
                 visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, 
-                // CHANGE: 'unfilterable-float' -> 'float'
-                texture: { sampleType: 'float' } 
+                texture: { sampleType: 'float' }
+            },
+            {
+                binding: 1, // Normal Texture (RGBA16F filterable)
+                visibility: GPUShaderStage.FRAGMENT, 
+                texture: { sampleType: 'float' }
+            },
+            {
+                binding: 2, // Tile
+                visibility: GPUShaderStage.FRAGMENT, 
+                texture: { sampleType: 'float' }
+            },
+            {
+                binding: 3, // Splat
+                visibility: GPUShaderStage.FRAGMENT, 
+                texture: { sampleType: 'float' }
+            },
+            {
+                binding: 4, // Macro mask
+                visibility: GPUShaderStage.FRAGMENT, 
+                texture: { sampleType: 'float' }
             }
         ];
-
-        // Bindings 1-4 (Normal, Tile, etc)
-        for (let i = 1; i < 5; i++) {
-            chunkEntries.push({
-                binding: i,
-                visibility: GPUShaderStage.FRAGMENT,
-                // These can be float (filterable) now too if you want smooth normals
-                texture: { sampleType: 'float' } 
-            });
-        }
         layouts.push(this.device.createBindGroupLayout({ 
             label: 'Terrain-Group1-Textures',
             entries: chunkEntries 
@@ -656,6 +670,17 @@ _describeLayouts(layouts) {
         const groups = [];
 
         const materialName = (material.name || '').toLowerCase();
+
+        // Simple custom path for instanced debug material
+        if (materialName.includes('instanceddebug') && material.bindGroupLayoutSpec) {
+            const packed = this._packDebugUniforms(uniforms);
+            const buf = this._getOrCreateUniformBuffer(`instanced_${material.id}`, packed);
+            groups.push(this.device.createBindGroup({
+                layout: material._gpuPipeline.bindGroupLayouts[0],
+                entries: [{ binding: 0, resource: { buffer: buf } }]
+            }));
+            return groups;
+        }
 
         // ORBITAL SPHERE: Special bind group creation
         if (materialName.includes('orbital') || materialName.includes('sphere')) {
@@ -942,6 +967,19 @@ _describeLayouts(layouts) {
         return data;
     }
 
+    _packDebugUniforms(uniforms) {
+        const data = new Float32Array(32);
+        let offset = 0;
+        const writeMat = (m) => {
+            if (m?.elements) data.set(m.elements, offset);
+            else data.set([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1], offset);
+            offset += 16;
+        };
+        writeMat(uniforms.viewMatrix?.value);
+        writeMat(uniforms.projectionMatrix?.value);
+        return data;
+    }
+
     _getOrCreateBuffer(name, data) { return this._getOrCreateUniformBuffer(name, data); }
 
     _getOrCreateUniformBuffer(name, data) {
@@ -1013,6 +1051,13 @@ _describeLayouts(layouts) {
         setVBuf(1, geometry.attributes.get('normal'));
         setVBuf(2, geometry.attributes.get('uv'));
 
+        // Bind any custom instanced/extra attributes with explicit slots
+        for (const [name, attr] of geometry.attributes) {
+            if (attr.stepMode === 'instance' && attr.slot !== undefined) {
+                setVBuf(attr.slot, attr);
+            }
+        }
+
         // Handle Instance Matrix Buffers
         if (material.vertexShader.includes('instanceMatrix') || material.vertexShader.includes('@location(4)')) {
             const instanceMatrix = geometry.attributes.get('instanceMatrix');
@@ -1035,12 +1080,14 @@ _describeLayouts(layouts) {
         // Guard against 0 vertex draws
         if (count === 0) return;
 
+        const instanceCount = geometry.instanceCount || 1;
+
         if (geometry.index) {
             const iBuf = this._getOrCreateAttributeBuffer(geometry, geometry.index.data, true);
             this._renderPassEncoder.setIndexBuffer(iBuf.gpuBuffer, geometry.index.data instanceof Uint32Array ? 'uint32' : 'uint16');
-            this._renderPassEncoder.drawIndexed(count, 1, geometry.drawRange.start, 0, 0);
+            this._renderPassEncoder.drawIndexed(count, instanceCount, geometry.drawRange.start, 0, 0);
         } else {
-            this._renderPassEncoder.draw(count, 1, geometry.drawRange.start, 0);
+            this._renderPassEncoder.draw(count, instanceCount, geometry.drawRange.start, 0);
         }
     }
 

@@ -65,6 +65,19 @@ export function createTerrainComputeShader() {
         return vec3<f32>(sx, sy, sz);
     }
     
+    fn sampleHeight(worldX: f32, worldY: f32) -> f32 {
+        var pos: vec3<f32>;
+        if (u.face >= 0) {
+            let normalizedU = worldX / (f32(u.chunkSize) * 16.0);
+            let normalizedV = worldY / (f32(u.chunkSize) * 16.0);
+            pos = getSpherePoint(u.face, normalizedU, normalizedV) * 50000.0;
+        } else {
+            pos = vec3<f32>(worldX, 0.0, worldY);
+        }
+        let noiseVal = fbm(pos * u.elevationScale * 0.01, 4);
+        return noiseVal * u.heightScale + u.heightScale;
+    }
+    
     @compute @workgroup_size(8, 8)
     fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let dims = textureDimensions(outTex);
@@ -72,34 +85,31 @@ export function createTerrainComputeShader() {
     
         let worldX = f32(u.chunkX * u.chunkSize) + f32(global_id.x);
         let worldY = f32(u.chunkY * u.chunkSize) + f32(global_id.y);
-        var pos: vec3<f32>;
-        
-        if (u.face >= 0) {
-            // Normalize UVs based on chunks per face (approximate)
-            // Adjust 16.0 if chunksPerFace changes
-            let normalizedU = worldX / (f32(u.chunkSize) * 16.0); 
-            let normalizedV = worldY / (f32(u.chunkSize) * 16.0);
-            pos = getSpherePoint(u.face, normalizedU, normalizedV) * 50000.0; // 50k radius
-        } else {
-            pos = vec3<f32>(worldX, 0.0, worldY);
-        }
     
-        var height = 0.0;
-        if (u.outputType == 0 || u.outputType == 1) {
-            let noiseVal = fbm(pos * u.elevationScale * 0.01, 4);
-            height = noiseVal * u.heightScale + u.heightScale;
-        }
+        let height = sampleHeight(worldX, worldY);
     
         var result = vec4<f32>(0.0);
-        if (u.outputType == 0) { result = vec4<f32>(height, 0.0, 0.0, 1.0); } 
-        else if (u.outputType == 1) { result = vec4<f32>(0.0, 1.0, 0.0, 1.0); }
-        else if (u.outputType == 2) { 
+        if (u.outputType == 0) {
+            // Height
+            result = vec4<f32>(height, 0.0, 0.0, 1.0);
+        } else if (u.outputType == 1) {
+            // Normal from height derivatives (central differences)
+            let e = 1.0;
+            let hL = sampleHeight(worldX - e, worldY);
+            let hR = sampleHeight(worldX + e, worldY);
+            let hD = sampleHeight(worldX, worldY - e);
+            let hU = sampleHeight(worldX, worldY + e);
+            let dx = (hR - hL) * 0.5;
+            let dy = (hU - hD) * 0.5;
+            let n = normalize(vec3<f32>(-dx, 1.0, -dy));
+            result = vec4<f32>(n * 0.5 + 0.5, 1.0);
+        } else if (u.outputType == 2) { 
             var tile = 3.0; 
             if (height < 5.0) { tile = 1.0; }
             else if (height > 60.0) { tile = 5.0; }
             result = vec4<f32>(tile / 255.0, 0.0, 0.0, 1.0); 
         }
-        else if (u.outputType == 3) { result = vec4<f32>(snoise(pos * u.biomeScale), 0.0, 0.0, 1.0); }
+        else if (u.outputType == 3) { result = vec4<f32>(snoise(vec3<f32>(worldX, 0.0, worldY) * u.biomeScale), 0.0, 0.0, 1.0); }
     
         textureStore(outTex, vec2<i32>(global_id.xy), result);
     }

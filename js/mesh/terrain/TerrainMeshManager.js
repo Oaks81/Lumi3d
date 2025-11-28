@@ -246,19 +246,29 @@ async _createTerrainMaterial(chunkData, environmentState, lodLevel, textureInfo)
         }
     }
 
-    removeChunk(chunkKey) {
-        if (this.chunkMeshes.has(chunkKey)) {
-            const entry = this.chunkMeshes.get(chunkKey);
+    removeChunk(chunkKeyStr) {
+        // Support both spherical ("face:x,y:lod") and flat ("x,y") keys
+        const candidateKeys = [chunkKeyStr];
+        if (chunkKeyStr && chunkKeyStr.includes(':')) {
+            const parts = chunkKeyStr.split(':');
+            const face = parts[0];
+            const coords = (parts[1] || '').split(',');
+            if (coords.length === 2) {
+                const flat = `${coords[0]},${coords[1]}`;
+                const faceKey = `${face}:${coords[0]},${coords[1]}:0`;
+                candidateKeys.push(flat, faceKey);
+            }
         }
-        const keyFlat = `${chunkX},${chunkY}`;
-        let targetKey = null;
-        let entry = this.chunkMeshes.get(keyFlat);
-        if (entry) {
-            if (entry.material && this.backend.deleteShader) {
+
+        for (const key of candidateKeys) {
+            if (!this.chunkMeshes.has(key)) continue;
+            const entry = this.chunkMeshes.get(key);
+            if (entry?.material && this.backend.deleteShader) {
                 this.backend.deleteShader(entry.material);
                 if (entry.material.dispose) entry.material.dispose();
             }
-            this.chunkMeshes.delete(targetKey);
+            this.chunkMeshes.delete(key);
+            return;
         }
     }
 

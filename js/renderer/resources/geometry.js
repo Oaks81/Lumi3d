@@ -6,6 +6,7 @@ export class Geometry {
         this.attributes = new Map();
         this.index = null;
         this.drawRange = { start: 0, count: Infinity };
+        this.instanceCount = 1;
         this.boundingSphere = null;
         this.userData = {};
         
@@ -15,12 +16,14 @@ export class Geometry {
     
     static _nextId = 0;
     
-    setAttribute(name, data, itemSize, normalized = false) {
+    setAttribute(name, data, itemSize, normalized = false, options = {}) {
         this.attributes.set(name, {
             data: data,
             itemSize: itemSize,
             normalized: normalized,
-            count: data.length / itemSize
+            count: data.length / itemSize,
+            stepMode: options.stepMode || 'vertex',
+            slot: options.slot
         });
         this._needsUpload = true;
         return this;

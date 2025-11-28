@@ -11,6 +11,8 @@ import { ClusterGrid } from '../../lighting/clusterGrid.js';
 import { CascadedShadowMapRenderer } from '../../shadows/cascadedShadowMapRenderer.js';
 import { OrbitalSphereRenderer } from '../orbitalSphereRenderer.js';
 import { GenericMeshRenderer } from '../genericMeshRenderer.js';
+import { Geometry } from '../resources/geometry.js';
+import { Material } from '../resources/material.js';
 
 export class Frontend {
     constructor(canvas, options = {}) {
@@ -38,6 +40,7 @@ export class Frontend {
         });
 
         this.masterChunkLoader = null;
+        this._instancedTest = null;
 
         this.camera = {
             position: new THREE.Vector3(0, 50, 0),
@@ -59,6 +62,118 @@ export class Frontend {
         this.planetConfig = null;
         this.orbitalSphereRenderer = null;
         
+    }
+
+    /**
+     * Debug helper: create a small instanced grid to validate instancing path.
+     * Enable by calling frontend.enableInstancedDebug().
+     */
+    _setupInstancedDebug() {
+        this._instancedTest = null;
+        // Disabled by default; call enableInstancedDebug() to activate
+    }
+
+    enableInstancedDebug() {
+        const gridSize = 16;
+        const quad = this._buildQuadGeometry();
+        const instanceCount = gridSize * gridSize;
+
+        const instanceData = new Float32Array(instanceCount * 4);
+        let idx = 0;
+        for (let y = 0; y < gridSize; y++) {
+            for (let x = 0; x < gridSize; x++) {
+                instanceData[idx++] = x * 2.0;
+                instanceData[idx++] = 0.0;
+                instanceData[idx++] = y * 2.0;
+                instanceData[idx++] = 1.0;
+            }
+        }
+        quad.instanceCount = instanceCount;
+        quad.setAttribute('instanceOffset', instanceData, 4, false, { stepMode: 'instance', slot: 3 });
+
+        const vs = `
+struct DebugUniforms {
+  viewMatrix : mat4x4<f32>,
+  projectionMatrix : mat4x4<f32>,
+};
+@group(0) @binding(0) var<uniform> uniforms : DebugUniforms;
+
+struct VertexInput {
+  @location(0) position : vec3<f32>,
+  @location(1) normal   : vec3<f32>,
+  @location(2) uv       : vec2<f32>,
+  @location(3) inst     : vec4<f32>,
+};
+struct VertexOutput {
+  @builtin(position) clipPosition : vec4<f32>,
+  @location(0) vUv : vec2<f32>,
+};
+@vertex
+fn main(input : VertexInput) -> VertexOutput {
+  var output : VertexOutput;
+  let worldPos = vec4<f32>(input.position + input.inst.xyz, 1.0);
+  let viewPos = uniforms.viewMatrix * worldPos;
+  output.clipPosition = uniforms.projectionMatrix * viewPos;
+  output.vUv = input.uv;
+  return output;
+}
+`;
+
+        const fs = `
+@fragment
+fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
+  return vec4<f32>(vUv, 0.0, 1.0);
+}
+`;
+
+        const mat = new Material({
+            name: 'InstancedDebug',
+            vertexShader: vs,
+            fragmentShader: fs,
+            vertexLayout: [
+                { arrayStride: 12, stepMode: 'vertex', attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x3' }] },
+                { arrayStride: 12, stepMode: 'vertex', attributes: [{ shaderLocation: 1, offset: 0, format: 'float32x3' }] },
+                { arrayStride: 8,  stepMode: 'vertex', attributes: [{ shaderLocation: 2, offset: 0, format: 'float32x2' }] },
+                { arrayStride: 16, stepMode: 'instance', attributes: [{ shaderLocation: 3, offset: 0, format: 'float32x4' }] }
+            ],
+            uniforms: {
+                viewMatrix: { value: new THREE.Matrix4() },
+                projectionMatrix: { value: new THREE.Matrix4() }
+            },
+            bindGroupLayoutSpec: [
+                {
+                    entries: [
+                        { binding: 0, visibility: 'vertex', buffer: { type: 'uniform' } }
+                    ]
+                }
+            ]
+        });
+
+        this._instancedTest = { geometry: quad, material: mat };
+        console.log('Instanced debug enabled:', { instances: instanceCount });
+    }
+
+    _buildQuadGeometry() {
+        const geom = new Geometry();
+        const positions = new Float32Array([
+            -0.5, 0, -0.5,
+             0.5, 0, -0.5,
+             0.5, 0,  0.5,
+            -0.5, 0,  0.5,
+        ]);
+        const normals = new Float32Array([
+            0,1,0, 0,1,0, 0,1,0, 0,1,0
+        ]);
+        const uvs = new Float32Array([
+            0,0, 1,0, 1,1, 0,1
+        ]);
+        const indices = new Uint16Array([0,1,2, 0,2,3]);
+        geom.setAttribute('position', positions, 3);
+        geom.setAttribute('normal', normals, 3);
+        geom.setAttribute('uv', uvs, 2);
+        geom.setIndex(indices);
+        geom.computeBoundingSphere();
+        return geom;
     }
 
     getBackend() {
@@ -276,6 +391,7 @@ export class Frontend {
         this.backend.setViewport(0, 0, this.canvas.width, this.canvas.height);
         this.genericMeshRenderer = new GenericMeshRenderer(this.backend);
         console.log('GenericMeshRenderer initialized');
+        this._setupInstancedDebug(); // Safe no-op if disabled
         this.clusterGrid = new ClusterGrid({
             gridSizeX: 16,
             gridSizeY: 8,
@@ -382,7 +498,14 @@ export class Frontend {
     }
 
     renderGenericMeshes() {
-        return;
+        // Optional instanced debug draw
+        if (this._instancedTest) {
+            const { geometry, material } = this._instancedTest;
+            material.uniforms.viewMatrix.value.copy(this.camera.matrixWorldInverse);
+            material.uniforms.projectionMatrix.value.copy(this.camera.projectionMatrix);
+            this.backend.draw(geometry, material);
+        }
+
         if (!this.genericMeshRenderer) return;
         
         const viewMatrix = this.camera.matrixWorldInverse;
