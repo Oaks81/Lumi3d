@@ -71,10 +71,13 @@ export class WebGPUTerrainGenerator {
         this.terrainBindGroupLayout = this.device.createBindGroupLayout({
             entries: [
                 { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
-                { binding: 1, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'write-only', format: 'rgba32float', viewDimension: '2d' } }
+                { 
+                    binding: 1, 
+                    visibility: GPUShaderStage.COMPUTE, 
+                    storageTexture: { access: 'write-only', format: 'rgba16float', viewDimension: '2d' }
+                }
             ]
         });
-
         this.terrainPipeline = this.device.createComputePipeline({
             layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.terrainBindGroupLayout] }),
             compute: { module: this.terrainShaderModule, entryPoint: 'main' }
@@ -85,17 +88,20 @@ export class WebGPUTerrainGenerator {
                 { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
                 { binding: 1, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'unfilterable-float', viewDimension: '2d' } },
                 { binding: 2, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'unfilterable-float', viewDimension: '2d' } },
-                { binding: 3, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'write-only', format: 'rgba32float', viewDimension: '2d' } }
+                { 
+                    binding: 3, 
+                    visibility: GPUShaderStage.COMPUTE, 
+                    storageTexture: { access: 'write-only', format: 'rgba16float', viewDimension: '2d' }
+                }
             ]
         });
-
         this.splatPipeline = this.device.createComputePipeline({
             layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.splatBindGroupLayout] }),
             compute: { module: this.splatShaderModule, entryPoint: 'main' }
         });
     }
 
-    createGPUTexture(width, height, format = 'rgba32float') {
+    createGPUTexture(width, height, format = 'rgba16float') {
         return this.device.createTexture({
             size: [width, height],
             format: format,
@@ -114,9 +120,6 @@ export class WebGPUTerrainGenerator {
         return { total, totalMB: (total / 1024 / 1024).toFixed(2) };
     }
 
-    // ========================================================================
-    // FIXED: generateAtlasTextures defines 'face' properly
-    // ========================================================================
     async generateAtlasTextures(atlasKey, config) {
         if (!this.initialized) await this.initialize();
         
@@ -131,13 +134,15 @@ export class WebGPUTerrainGenerator {
         const atlasChunkX = atlasKey.atlasX * config.chunksPerAxis;
         const atlasChunkY = atlasKey.atlasY * config.chunksPerAxis;
         
+
+        // Use default (rgba16float) for these
         const gpuHeight = this.createGPUTexture(heightNormalSize, heightNormalSize);
         const gpuNormal = this.createGPUTexture(heightNormalSize, heightNormalSize);
         const gpuTile = this.createGPUTexture(tileSize, tileSize);
         const gpuMacro = this.createGPUTexture(splatSize, splatSize);
         const gpuSplatData = this.createGPUTexture(splatSize, splatSize);
-        
-        // 2. PASS FACE TO RUN FUNCTIONS
+
+
         await this.runTerrainPassAtlas(gpuHeight, atlasChunkX, atlasChunkY, face, 0, heightNormalSize, heightNormalSize, config.chunkSize);
         await this.runTerrainPassAtlas(gpuNormal, atlasChunkX, atlasChunkY, face, 1, heightNormalSize, heightNormalSize, config.chunkSize);
         await this.runTerrainPassAtlas(gpuTile, atlasChunkX, atlasChunkY, face, 2, tileSize, tileSize, config.chunkSize);
@@ -147,14 +152,14 @@ export class WebGPUTerrainGenerator {
         await this.runSplatPassAtlas(gpuHeight, gpuTile, gpuSplatData, atlasChunkX, atlasChunkY, splatSize, splatSize, config.chunkSize);
         
         const textures = {
-            height: this.wrapGPUTexture(gpuHeight, heightNormalSize, heightNormalSize, null),
-            normal: this.wrapGPUTexture(gpuNormal, heightNormalSize, heightNormalSize, null),
-            tile: this.wrapGPUTexture(gpuTile, tileSize, tileSize, null),
-            macro: this.wrapGPUTexture(gpuMacro, splatSize, splatSize, null),
-            splatData: this.wrapGPUTexture(gpuSplatData, splatSize, splatSize, null)
+            height: this.wrapGPUTexture(gpuHeight, heightNormalSize, heightNormalSize, 'rgba16float'),
+            normal: this.wrapGPUTexture(gpuNormal, heightNormalSize, heightNormalSize, 'rgba16float'),
+            tile: this.wrapGPUTexture(gpuTile, tileSize, tileSize, 'rgba16float'),
+            macro: this.wrapGPUTexture(gpuMacro, splatSize, splatSize, 'rgba16float'),
+            splatData: this.wrapGPUTexture(gpuSplatData, splatSize, splatSize, 'rgba16float')
         };
         
-        const bytesPerPixel = 16;
+        const bytesPerPixel = 8;
         this.textureCache.set(atlasKey, null, 'height', textures.height, heightNormalSize * heightNormalSize * bytesPerPixel);
         this.textureCache.set(atlasKey, null, 'normal', textures.normal, heightNormalSize * heightNormalSize * bytesPerPixel);
         this.textureCache.set(atlasKey, null, 'tile', textures.tile, tileSize * tileSize * bytesPerPixel);
@@ -168,9 +173,7 @@ export class WebGPUTerrainGenerator {
         };
     }
     
-    // ========================================================================
-    // FIXED: runTerrainPassAtlas now accepts 'face' in arguments
-    // ========================================================================
+
     async runTerrainPassAtlas(outTex, atlasChunkX, atlasChunkY, face, type, w, h, chunkSize) {
         const data = new ArrayBuffer(64);
         const v = new DataView(data);
@@ -305,12 +308,16 @@ export class WebGPUTerrainGenerator {
         return subregion;
     }
 
-    wrapGPUTexture(gpuTex, w, h, cpuData = null) {
-        const t = new Texture({ width: w, height: h, format: TextureFormat.RGBA32F, minFilter: TextureFilter.NEAREST, magFilter: TextureFilter.NEAREST, generateMipmaps: false });
-        t._gpuTexture = { texture: gpuTex, view: gpuTex.createView(), format: 'rgba32float' };
+    wrapGPUTexture(gpuTex, w, h, formatOverride = 'rgba16float') {
+        const t = new Texture({ 
+            width: w, height: h, 
+            format: TextureFormat.RGBA16F, // Important for internal logic
+            minFilter: TextureFilter.LINEAR, 
+            magFilter: TextureFilter.LINEAR 
+        });
+        t._gpuTexture = { texture: gpuTex, view: gpuTex.createView(), format: formatOverride };
         t._needsUpload = false;
-        t._isGPUOnly = (cpuData === null);
-        if (cpuData !== null) t.data = cpuData;
+        t._isGPUOnly = true;
         return t;
     }
 }

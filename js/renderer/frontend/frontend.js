@@ -105,12 +105,37 @@ export class Frontend {
         const position = this.camera.position;
         const target = this.camera.target;
     
+        // 1. Calculate View Direction (Z-Axis)
         const zAxis = new THREE.Vector3().subVectors(position, target).normalize();
-        const xAxis = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), zAxis).normalize();
+        
+        // 2. Calculate "Up" Vector
+        // For a planet, "Up" is the direction from the planet center to the camera.
+        // Assuming planet is at (0,0,0)
+        let up = new THREE.Vector3().copy(position).normalize();
+        
+        // EDGE CASE: If camera is at (0,0,0) (impossible) or math fails, fallback
+        if (up.lengthSq() < 0.0001) up.set(0, 1, 0);
+
+        // SINGULARITY CHECK:
+        // If View Dir (zAxis) and Up Vector are parallel (looking straight down),
+        // we can't derive "Right" (xAxis). We must arbitrarily choose a different "Up".
+        // This usually happens at the poles.
+        const dot = Math.abs(zAxis.dot(up));
+        if (dot > 0.99) {
+            // Camera is looking straight down/up relative to gravity.
+            // Perturb 'up' slightly to Z-axis to get a valid cross product.
+            up.set(0, 0, 1); 
+        }
+    
+        // 3. Calculate Right Vector (X-Axis)
+        const xAxis = new THREE.Vector3().crossVectors(up, zAxis).normalize();
+        
+        // 4. Recalculate True Up Vector (Y-Axis) to ensure orthogonality
         const yAxis = new THREE.Vector3().crossVectors(zAxis, xAxis);
     
         const te = this.camera.matrixWorldInverse.elements;
     
+        // Fill Matrix
         te[0] = xAxis.x; te[4] = xAxis.y; te[8] = xAxis.z;
         te[1] = yAxis.x; te[5] = yAxis.y; te[9] = yAxis.z;
         te[2] = zAxis.x; te[6] = zAxis.y; te[10] = zAxis.z;
@@ -151,17 +176,9 @@ export class Frontend {
         pe[7] = 0;
         pe[11] = -1;
         pe[15] = 0;
-    
-        // Verify camera is reasonable
-        if (this.frameCount === 1) {
-            console.log('📷 Camera setup:', {
-                position: { x: position.x, y: position.y, z: position.z },
-                target: { x: target.x, y: target.y, z: target.z },
-                fov: this.camera.fov,
-                aspect: this.camera.aspect.toFixed(2),
-                near: this.camera.near,
-                far: this.camera.far
-            });
+
+        if (this.uniformManager) {
+            this.uniformManager.updateCameraParameters(this.camera);
         }
     }
     async initializeChunkLoader() {

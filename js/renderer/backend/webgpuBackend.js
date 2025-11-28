@@ -574,44 +574,58 @@ _describeLayouts(layouts) {
         return this._createTerrainBindGroupLayouts();
     }
 
-
     _createTerrainBindGroupLayouts() {
         const layouts = [];
 
         // Group 0: Uniforms
         layouts.push(this.device.createBindGroupLayout({
+            label: 'Terrain-Group0-Uniforms',
             entries: [
                 { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
                 { binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } }
             ]
         }));
+        const chunkEntries = [
+            {
+                binding: 0, // Height Texture
+                visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, 
+                // CHANGE: 'unfilterable-float' -> 'float'
+                texture: { sampleType: 'float' } 
+            }
+        ];
 
-        // Group 1: Chunk textures
-        const chunkEntries = [];
-        for (let i = 0; i < 5; i++) {
+        // Bindings 1-4 (Normal, Tile, etc)
+        for (let i = 1; i < 5; i++) {
             chunkEntries.push({
                 binding: i,
                 visibility: GPUShaderStage.FRAGMENT,
-                texture: { sampleType: 'unfilterable-float' }
+                // These can be float (filterable) now too if you want smooth normals
+                texture: { sampleType: 'float' } 
             });
         }
-        layouts.push(this.device.createBindGroupLayout({ entries: chunkEntries }));
+        layouts.push(this.device.createBindGroupLayout({ 
+            label: 'Terrain-Group1-Textures',
+            entries: chunkEntries 
+        }));
 
         // Group 2: Atlas & Lookups
         layouts.push(this.device.createBindGroupLayout({
+            label: 'Terrain-Group2-Atlases',
             entries: [
                 { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },      // atlasTexture
                 { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },      // level2AtlasTexture
                 { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } }, // tileTypeLookup
                 { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } }, // macroTileTypeLookup
                 { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } }, // numVariantsTex
-                { binding: 5, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
+                // Binding 5: Sampler - Needed in VERTEX to sample height map
+                { binding: 5, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
                 { binding: 6, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'non-filtering' } }
             ]
         }));
 
         // Group 3: Shadows & Clusters
         layouts.push(this.device.createBindGroupLayout({
+            label: 'Terrain-Group3-Lighting',
             entries: [
                 { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
                 { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
@@ -822,21 +836,64 @@ _describeLayouts(layouts) {
     }
 
     _packVertexUniforms(uniforms) {
-        const data = new Float32Array(64);
+        // Size: 80 floats (320 bytes) to ensure enough space
+        const data = new Float32Array(80); 
         let offset = 0;
+
         const writeMat = (m) => {
             if (m?.elements) data.set(m.elements, offset);
             else data.set([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1], offset);
             offset += 16;
         };
+
+        // 1. Matrices (0-47) - 192 bytes
         writeMat(uniforms.modelMatrix?.value);
         writeMat(uniforms.viewMatrix?.value);
         writeMat(uniforms.projectionMatrix?.value);
 
+        // 2. Chunk Props (48-51) - 16 bytes
         data[offset++] = uniforms.chunkOffset?.value?.x || 0;
         data[offset++] = uniforms.chunkOffset?.value?.y || 0;
         data[offset++] = uniforms.chunkSize?.value || 128;
         data[offset++] = uniforms.macroScale?.value || 0.1;
+
+        // 3. Planet Radius (52) - 4 bytes
+        data[offset++] = uniforms.planetRadius?.value || 50000;
+
+        // === CRITICAL FIX: PADDING ===
+        // The next field is 'planetOrigin' (vec3). In WGSL uniform buffers, 
+        // vec3 requires 16-byte alignment.
+        // Current offset is 53 floats (212 bytes). 
+        // Next 16-byte boundary is at 56 floats (224 bytes).
+        // We must skip 3 floats.
+        data[offset++] = 0; // Padding
+        data[offset++] = 0; // Padding
+        data[offset++] = 0; // Padding
+
+        // 4. Planet Origin (56-58)
+        const origin = uniforms.planetOrigin?.value;
+        data[offset++] = origin?.x || 0;
+        data[offset++] = origin?.y || 0;
+        data[offset++] = origin?.z || 0;
+        
+        // 5. Face Info (59-62)
+        // Face (i32 cast to f32 for storage)
+        data[offset++] = uniforms.chunkFace?.value ?? -1; 
+        
+        // Chunk Location (vec2)
+        const cLoc = uniforms.chunkLocation?.value;
+        data[offset++] = cLoc?.x || 0;
+        data[offset++] = cLoc?.y || 0;
+        
+        data[offset++] = uniforms.chunkSizeUV?.value || 1.0;
+
+        // 6. Atlas Params (63-66)
+        data[offset++] = uniforms.useAtlasMode?.value || 0;
+        const aOff = uniforms.atlasUVOffset?.value;
+        data[offset++] = aOff?.x || 0;
+        data[offset++] = aOff?.y || 0;
+        data[offset++] = uniforms.atlasUVScale?.value || 1.0;
+
         return data;
     }
 

@@ -85,6 +85,7 @@ export class WebGPUWorldGenerator extends BaseWorldGenerator {
         
         // Create chunk data structure
         const chunkData = new ChunkData(chunkX, chunkY, this.chunkSize);
+        chunkData.face = face; // Store the face ID!
         if (this.planetConfig) {
             chunkData.isSpherical = true;
             chunkData.baseAltitude = this.planetConfig.radius;

@@ -161,38 +161,45 @@ export class TerrainMeshManager {
         return result;
     }
 
-    async _createTerrainMaterial(chunkData, environmentState, lodLevel, textureInfo) {
-        const atlasTextures = {
-            micro: this.textureManager.getAtlasTexture('micro'),
-            macro1024: this.textureManager.getAtlasTexture('macro_1024')
-        };
-        const lookupTables = this.textureManager.getLookupTables();
 
-        return await TerrainMaterialBuilder.create({
-            backend: this.backend,
-            atlasTextures,
-            lookupTables,
-            cachedTextures: textureInfo.textures,
-            chunkOffsetX: chunkData.chunkX * chunkData.size,
-            chunkOffsetZ: chunkData.chunkY * chunkData.size,
-            chunkSize: chunkData.size,
-            environmentState,
-            uniformManager: this.uniformManager,
-            lodLevel: lodLevel,
-            planetConfig: { radius: 50000.0, origin: new THREE.Vector3(0,0,0) },
-            faceIndex: chunkData.face ?? -1,
-            faceU: chunkData.faceU || 0,
-            faceV: chunkData.faceV || 0,
-            faceSize: chunkData.faceSize || 1,
-            useAtlasMode: textureInfo.useAtlasMode,
-            uvTransform: textureInfo.uvTransform
-        });
-    }
+async _createTerrainMaterial(chunkData, environmentState, lodLevel, textureInfo) {
+    const atlasTextures = {
+        micro: this.textureManager.getAtlasTexture('micro'),
+        macro1024: this.textureManager.getAtlasTexture('macro_1024')
+    };
+    const lookupTables = this.textureManager.getLookupTables();
 
-    /**
-     * Updates uniforms for all active chunks.
-     * Called every frame by Frontend.js
-     */
+    return await TerrainMaterialBuilder.create({
+        backend: this.backend,
+        atlasTextures,
+        lookupTables,
+        cachedTextures: textureInfo.textures,
+        chunkOffsetX: chunkData.chunkX * chunkData.size,
+        chunkOffsetZ: chunkData.chunkY * chunkData.size,
+        chunkSize: chunkData.size,
+        environmentState,
+        uniformManager: this.uniformManager,
+        lodLevel: lodLevel,
+        planetConfig: { radius: 50000.0, origin: new THREE.Vector3(0,0,0) },
+        
+      // === FIX START ===
+      faceIndex: chunkData.face ?? -1,
+            
+      // Map the CHUNK coordinates to the FACE coordinates
+      faceU: chunkData.chunkX, 
+      faceV: chunkData.chunkY,
+      
+      // Ensure this matches your grid size (default 16 chunks across a face)
+      faceSize: 16, 
+      // === FIX END ===
+        
+        // Ensure this matches your chunks per face config (usually 16)
+        faceSize: 16, 
+        
+        useAtlasMode: textureInfo.useAtlasMode,
+        uvTransform: textureInfo.uvTransform
+    });
+}
     updateEnvUniforms(environmentState, camera, shadowData, clusteredLightData) {
         for (const [key, meshEntry] of this.chunkMeshes) {
             if (!meshEntry.material || !meshEntry.material.uniforms) continue;

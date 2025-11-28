@@ -159,12 +159,13 @@ export class TerrainMaterialBuilder {
             vertexShader: vertexShader,
             fragmentShader: fragmentShader,
             uniforms,
-            side: 'front', // Or 'double' if you are inside the sphere
+            side: 'double', 
+       //     side: 'front', // Or 'double' if you are inside the sphere
             depthTest: true,
             depthWrite: true,
             vertexLayout: vertexLayout,
             defines: {
-                USE_ATLAS_MODE: finalUseAtlasMode
+                USE_ATLAS_MODE:1// finalUseAtlasMode
             }
         });
 

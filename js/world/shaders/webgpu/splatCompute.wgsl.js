@@ -12,7 +12,7 @@ struct Uniforms {
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
 @group(0) @binding(1) var heightMap: texture_2d<f32>;
 @group(0) @binding(2) var tileMap: texture_2d<f32>;
-@group(0) @binding(3) var splatDataTexture: texture_storage_2d<rgba32float, write>;
+@group(0) @binding(3) var splatDataTexture: texture_storage_2d<rgba16float, write>;
 
 const GRASS: u32 = 3u;
 const STONE: u32 = 5u;
