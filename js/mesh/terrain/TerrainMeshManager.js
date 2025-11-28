@@ -246,31 +246,18 @@ async _createTerrainMaterial(chunkData, environmentState, lodLevel, textureInfo)
         }
     }
 
-    removeChunk(chunkX, chunkY) {
-        // Robust removal attempting both flat and spherical keys
+    removeChunk(chunkKey) {
+        if (this.chunkMeshes.has(chunkKey)) {
+            const entry = this.chunkMeshes.get(chunkKey);
+        }
         const keyFlat = `${chunkX},${chunkY}`;
         let targetKey = null;
         let entry = this.chunkMeshes.get(keyFlat);
-
-        if (!entry) {
-            for (const [k, v] of this.chunkMeshes) {
-                if (v.chunkData.chunkX === chunkX && v.chunkData.chunkY === chunkY) {
-                    targetKey = k;
-                    entry = v;
-                    break;
-                }
-            }
-        } else {
-            targetKey = keyFlat;
-        }
-
         if (entry) {
             if (entry.material && this.backend.deleteShader) {
                 this.backend.deleteShader(entry.material);
                 if (entry.material.dispose) entry.material.dispose();
             }
-            // Note: Geometry is likely managed by builder pools, so simple dispose might not be enough
-            // but for now we assume standard GC or pool management.
             this.chunkMeshes.delete(targetKey);
         }
     }

@@ -78,12 +78,9 @@ fn main(input: VertexInput) -> VertexOutput {
     // Calculate UV for sampling the height texture
     var sampleUV = input.uv;
     
-    // If using Atlas, transform the UVs
+    // If using Atlas, transform the UVs (use full range so neighbors share edges)
     if (uniforms.useAtlasMode > 0.5) {
-        let epsilon = 0.5 / 2048.0; // Prevent bleeding
-        let minUV = uniforms.atlasUVOffset + epsilon;
-        let maxUV = uniforms.atlasUVOffset + vec2<f32>(uniforms.atlasUVScale) - epsilon;
-        sampleUV = mix(minUV, maxUV, input.uv);
+        sampleUV = uniforms.atlasUVOffset + input.uv * uniforms.atlasUVScale;
     }
     
     // Sample height (Red channel)

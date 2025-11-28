@@ -773,8 +773,12 @@ _describeLayouts(layouts) {
         };
 
         // Group 0: Uniforms
-        const vertU = this._getOrCreateUniformBuffer('vert', this._packVertexUniforms(uniforms));
-        const fragU = this._getOrCreateUniformBuffer('frag', this._packFragmentUniforms(uniforms));
+        // Use per-material keys so chunks don't overwrite each other's uniform data
+        const vertKey = `vert_${material.id}`;
+        const fragKey = `frag_${material.id}`;
+
+        const vertU = this._getOrCreateUniformBuffer(vertKey, this._packVertexUniforms(uniforms));
+        const fragU = this._getOrCreateUniformBuffer(fragKey, this._packFragmentUniforms(uniforms));
         groups.push(this.device.createBindGroup({
             layout: material._gpuPipeline.bindGroupLayouts[0],
             entries: [
@@ -836,8 +840,10 @@ _describeLayouts(layouts) {
     }
 
     _packVertexUniforms(uniforms) {
-        // Size: 80 floats (320 bytes) to ensure enough space
-        const data = new Float32Array(80); 
+        // Use a shared buffer so we can write ints correctly (e.g. chunkFace)
+        const buffer = new ArrayBuffer(80 * 4); // 80 floats worth of space
+        const data = new Float32Array(buffer);
+        const intView = new Int32Array(buffer);
         let offset = 0;
 
         const writeMat = (m) => {
@@ -877,8 +883,8 @@ _describeLayouts(layouts) {
         data[offset++] = origin?.z || 0;
         
         // 5. Face Info (59-62)
-        // Face (i32 cast to f32 for storage)
-        data[offset++] = uniforms.chunkFace?.value ?? -1; 
+        // Face is an i32 in WGSL, so write the raw int bits
+        intView[offset++] = uniforms.chunkFace?.value ?? -1; 
         
         // Chunk Location (vec2)
         const cLoc = uniforms.chunkLocation?.value;
@@ -898,13 +904,16 @@ _describeLayouts(layouts) {
     }
 
     _packFragmentUniforms(uniforms) {
-        const data = new Float32Array(256);
+        // Shared buffer so integer uniforms keep correct bit patterns
+        const buffer = new ArrayBuffer(256 * 4);
+        const data = new Float32Array(buffer);
+        const intView = new Int32Array(buffer);
         let offset = 0;
 
         data[offset++] = uniforms.chunkOffset?.value?.x || 0; data[offset++] = uniforms.chunkOffset?.value?.y || 0; data[offset++] = uniforms.chunkSize?.value || 128; data[offset++] = uniforms.chunkWidth?.value || 128;
         data[offset++] = uniforms.chunkHeight?.value || 128; data[offset++] = uniforms.tileScale?.value || 1; data[offset++] = uniforms.level2Blend?.value || 0.7; data[offset++] = uniforms.macroScale?.value || 0.1;
-        data[offset++] = uniforms.currentSeason?.value || 0; data[offset++] = uniforms.nextSeason?.value || 1; data[offset++] = uniforms.seasonTransition?.value || 0; data[offset++] = uniforms.maxTileTypes?.value || 256;
-        data[offset++] = uniforms.lodLevel?.value || 0; data[offset++] = uniforms.geometryLOD?.value || 0; data[offset++] = uniforms.splatLODBias?.value || 0; data[offset++] = uniforms.macroLODBias?.value || 0;
+        intView[offset++] = uniforms.currentSeason?.value ?? 0; intView[offset++] = uniforms.nextSeason?.value ?? 1; data[offset++] = uniforms.seasonTransition?.value || 0; data[offset++] = uniforms.maxTileTypes?.value || 256;
+        intView[offset++] = uniforms.lodLevel?.value ?? 0; intView[offset++] = uniforms.geometryLOD?.value ?? 0; data[offset++] = uniforms.splatLODBias?.value || 0; data[offset++] = uniforms.macroLODBias?.value || 0;
         data[offset++] = uniforms.detailFade?.value || 1; data[offset++] = uniforms.enableSplatLayer?.value || 1; data[offset++] = uniforms.enableMacroLayer?.value || 1; data[offset++] = uniforms.enableClusteredLights?.value || 1;
 
         const sunColor = uniforms.sunLightColor?.value; data[offset++] = sunColor?.r ?? 1; data[offset++] = sunColor?.g ?? 1; data[offset++] = sunColor?.b ?? 1; data[offset++] = uniforms.sunLightIntensity?.value ?? 1;
@@ -920,7 +929,7 @@ _describeLayouts(layouts) {
         const thunColor = uniforms.thunderLightColor?.value; data[offset++] = thunColor?.r ?? 1; data[offset++] = thunColor?.g ?? 1; data[offset++] = thunColor?.b ?? 1; data[offset++] = 0;
         const plyColor = uniforms.playerLightColor?.value; data[offset++] = plyColor?.r ?? 1; data[offset++] = plyColor?.g ?? 1; data[offset++] = plyColor?.b ?? 1; data[offset++] = uniforms.playerLightIntensity?.value ?? 0;
         const plyPos = uniforms.playerLightPosition?.value; data[offset++] = plyPos?.x ?? 0; data[offset++] = plyPos?.y ?? 0; data[offset++] = plyPos?.z ?? 0; data[offset++] = uniforms.playerLightDistance?.value ?? 10;
-        data[offset++] = uniforms.receiveShadow?.value ?? 1; data[offset++] = uniforms.isFeature?.value ?? 0; data[offset++] = uniforms.numCascades?.value ?? 3; data[offset++] = uniforms.shadowBias?.value ?? 0.0001;
+        data[offset++] = uniforms.receiveShadow?.value ?? 1; data[offset++] = uniforms.isFeature?.value ?? 0; intView[offset++] = uniforms.numCascades?.value ?? 3; data[offset++] = uniforms.shadowBias?.value ?? 0.0001;
         data[offset++] = uniforms.shadowNormalBias?.value ?? 0.1; data[offset++] = uniforms.shadowMapSize?.value ?? 2048; data[offset++] = 0; data[offset++] = 0;
         const splits = uniforms.cascadeSplits?.value; data[offset++] = splits?.x ?? 0; data[offset++] = splits?.y ?? 0; data[offset++] = splits?.z ?? 0; data[offset++] = 0;
         const cDims = uniforms.clusterDimensions?.value; data[offset++] = cDims?.x ?? 1; data[offset++] = cDims?.y ?? 1; data[offset++] = cDims?.z ?? 1; data[offset++] = uniforms.numLights?.value ?? 0;

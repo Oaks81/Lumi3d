@@ -260,7 +260,7 @@ export class MasterChunkLoader {
         chunkData.chunkY = chunkY;
         if (face !== null) chunkData.face = face;
 
-        const meshEntry = await this.terrainMeshManager.addChunk(chunkData, environmentState);
+        const meshEntry = await this.terrainMeshManager.addChunk(chunkData, environmentState, chunkKeyStr);
 
         if (!meshEntry) {
             console.error(`Failed to create mesh for ${chunkKeyStr}`);
@@ -317,7 +317,7 @@ export class MasterChunkLoader {
         const keyObj = ChunkKey.fromString(chunkKeyStr);
         
    
-        this.terrainMeshManager.removeChunk(keyObj.x, keyObj.y);
+        this.terrainMeshManager.removeChunk(chunkKeyStr);
 
         if (this.streamedFeatureManager) {
             this.streamedFeatureManager.onTerrainChunkUnloaded(keyObj.x, keyObj.y, chunkKeyStr);

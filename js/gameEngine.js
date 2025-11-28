@@ -250,16 +250,6 @@ const testChunks = [
     [32, 32]
 ];
 
-for (const [cx, cy] of testChunks) {
-    console.log(`\nTest chunk (${cx},${cy}):`);
-    const atlasKey = TextureAtlasKey.fromChunkCoords(cx, cy, null, 2048, 128);
-    console.log(`  Atlas key: "${atlasKey.toString()}"`);
-    
-    const uvTransform = atlasKey.getChunkUVTransform(cx, cy);
-    console.log(`  UV transform: offset=(${uvTransform.offsetX.toFixed(4)}, ${uvTransform.offsetY.toFixed(4)}), scale=${uvTransform.scale.toFixed(4)}`);
-    
-    console.log(`  Contains chunk: ${atlasKey.containsChunk(cx, cy)}`);
-}
 
 // Test 2: Parse key strings
 console.log('\n=== Testing key parsing ===');
