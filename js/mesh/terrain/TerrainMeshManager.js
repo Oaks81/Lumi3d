@@ -23,10 +23,19 @@ export class TerrainMeshManager {
 
     async addChunk(chunkData, environmentState) {
         // Unique key logic handling spherical faces
+        let chunkKey;
+        if (chunkData.face !== undefined && chunkData.face !== null) {
+            // Spherical mode: include face
+            chunkKey = `${chunkData.face}:${chunkData.chunkX},${chunkData.chunkY}:0`;
+        } else {
+            // Flat mode
+            chunkKey = `${chunkData.chunkX},${chunkData.chunkY}`;
+        }
+         /*
         const chunkKey = chunkData.isSpherical ? 
             `${chunkData.face}:${chunkData.chunkX},${chunkData.chunkY}:${chunkData.lodLevel||0}` : 
             `${chunkData.chunkX},${chunkData.chunkY}`;
-
+*/
         if (this.chunkMeshes.has(chunkKey)) {
             return this.chunkMeshes.get(chunkKey);
         }
@@ -100,9 +109,12 @@ export class TerrainMeshManager {
             lodLevel: lodLevel,
             useAtlasMode: textureInfo.useAtlasMode,
             atlasKey: textureInfo.atlasKey,
-            uvTransform: textureInfo.uvTransform
+            uvTransform: textureInfo.uvTransform,
+            modelMatrix: new THREE.Matrix4(),
         };
-
+        if (material.uniforms && !material.uniforms.modelMatrix) {
+            material.uniforms.modelMatrix = { value: meshEntry.modelMatrix };
+        }
         this.chunkMeshes.set(chunkKey, meshEntry);
         return meshEntry;
     }
@@ -186,8 +198,8 @@ async _createTerrainMaterial(chunkData, environmentState, lodLevel, textureInfo)
       faceIndex: chunkData.face ?? -1,
             
       // Map the CHUNK coordinates to the FACE coordinates
-      faceU: chunkData.chunkX, 
-      faceV: chunkData.chunkY,
+      faceU: chunkData.chunkX % 16,
+      faceV: chunkData.chunkY % 16,
       
       // Ensure this matches your grid size (default 16 chunks across a face)
       faceSize: 16, 

@@ -10,6 +10,8 @@ import { ClusteredLightManager } from '../../lighting/clusteredLightManager.js';
 import { ClusterGrid } from '../../lighting/clusterGrid.js';
 import { CascadedShadowMapRenderer } from '../../shadows/cascadedShadowMapRenderer.js';
 import { OrbitalSphereRenderer } from '../orbitalSphereRenderer.js';
+import { GenericMeshRenderer } from '../genericMeshRenderer.js';
+
 export class Frontend {
     constructor(canvas, options = {}) {
           
@@ -23,6 +25,7 @@ export class Frontend {
         this.chunkSize = options.chunkSize || 64;
 
         this.uniformManager = new UniformManager();
+        this.genericMeshRenderer = null;
 
         this.lodManager = new LODManager({
             chunkSize: this.chunkSize,
@@ -271,7 +274,8 @@ export class Frontend {
         }
     
         this.backend.setViewport(0, 0, this.canvas.width, this.canvas.height);
-    
+        this.genericMeshRenderer = new GenericMeshRenderer(this.backend);
+        console.log('GenericMeshRenderer initialized');
         this.clusterGrid = new ClusterGrid({
             gridSizeX: 16,
             gridSizeY: 8,
@@ -366,7 +370,7 @@ export class Frontend {
         }
     
         this.renderTerrain();
-    
+        this.renderGenericMeshes();
         if (this.backendType === 'webgpu') {
             this.backend.submitCommands();
         }
@@ -375,6 +379,16 @@ export class Frontend {
         if (error) {
             console.error('WebGPU validation error:', error.message);
         }
+    }
+
+    renderGenericMeshes() {
+        return;
+        if (!this.genericMeshRenderer) return;
+        
+        const viewMatrix = this.camera.matrixWorldInverse;
+        const projectionMatrix = this.camera.projectionMatrix;
+        
+        this.genericMeshRenderer.render(viewMatrix, projectionMatrix);
     }
     
     renderTerrain() {
@@ -438,7 +452,8 @@ export class Frontend {
     
             meshEntry.material.uniforms.viewMatrix.value.copy(viewMatrix);
             meshEntry.material.uniforms.projectionMatrix.value.copy(projectionMatrix);
-    
+            meshEntry.material.uniforms.modelMatrix.value.identity();  
+
             try {
                 this.backend.draw(meshEntry.geometry, meshEntry.material);
                 drawnCount++;
@@ -468,7 +483,9 @@ export class Frontend {
     }
 
     dispose() {
-
+        if (this.genericMeshRenderer) {
+            this.genericMeshRenderer.cleanup();
+        }
         this.masterChunkLoader.cleanupAll();
         this.lightManager.cleanup();
         this.shadowRenderer.cleanup();

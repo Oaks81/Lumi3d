@@ -1,3 +1,5 @@
+
+// js/renderer/geometry.js
 export class Geometry {
     constructor() {
         this.id = Geometry._nextId++;

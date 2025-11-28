@@ -111,6 +111,26 @@ export class GameEngine {
         window.gameEngine = this;
         window.debug = debugSphericalRendering;
     }
+
+    diagnoseChunkKeys() {
+        console.log('=== DIAGNOSTIC ===');
+        const cmKeys = Array.from(this.chunkManager.loadedChunks.keys()).slice(0, 3);
+        const tmm = this.renderer?.masterChunkLoader?.terrainMeshManager;
+        if (tmm) {
+            const tmmKeys = Array.from(tmm.chunkMeshes.keys()).slice(0, 3);
+            console.log('ChunkManager:', cmKeys);
+            console.log('TerrainMeshManager:', tmmKeys);
+            console.log('Match:', cmKeys[0] === tmmKeys[0]);
+            
+            const first = tmm.chunkMeshes.values().next().value;
+            if (first?.material?.uniforms) {
+                const u = first.material.uniforms;
+                console.log('chunkLocation:', u.chunkLocation?.value);
+                console.log('Should be around (0.4, 0.5), NOT (7, 8)');
+            }
+        }
+        console.log('==================');
+    }
     toggleCameraMode() {
         this.cameraMode = this.cameraMode === 'manual' ? 'follow' : 'manual';
         console.log('Camera mode:', this.cameraMode);
@@ -200,6 +220,7 @@ export class GameEngine {
         });
         await this.renderer.initialize(this.planetConfig);
     
+        
         const actualApiName = this.renderer.getBackendType();
         console.log(`Renderer initialized with ${actualApiName} backend`);
 
@@ -309,7 +330,9 @@ console.log('=== TextureAtlasKey tests complete ===\n');
             cameraAngle: 0.25,
             cameraSmoothing: 0.15
         });
-    
+        if (this.spaceshipModel && this.spaceshipModel.mesh) {
+            this.renderer.genericMeshRenderer.addMesh('spaceship', this.spaceshipModel.mesh);
+        }
         window.addEventListener('keydown', (e) => {
             if (e.key === 'v') {
                 this.toggleCameraMode();
@@ -501,7 +524,9 @@ update(deltaTime) {
 
     // Update spaceship model for rendering
     this.spaceshipModel.update(this.spaceship.getState());
-
+    if (this.renderer && this.renderer.genericMeshRenderer) {
+        this.renderer.genericMeshRenderer.updateMesh('spaceship');
+    }
     // ============================================
     // CHUNK LOADING
     // Pass spaceship position in GAME coordinates
