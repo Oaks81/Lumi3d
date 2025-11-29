@@ -33,7 +33,7 @@ export function buildTerrainChunkFragmentShader(options = {}) {
 // 6 = Visualize raw tile texture (no processing)
 // 7 = Visualize lookup texture (verify binding is correct)
 // ============================================================================
-const DEBUG_MODE: i32 = 0;
+const DEBUG_MODE: i32 =0;
 
 struct FragmentUniforms {
     cameraPosition: vec3<f32>,
@@ -81,6 +81,8 @@ struct VertexOutput {
 // =============================================================================
 // Group 2: Atlas Textures & Lookups - FIXED to match backend binding order!
 // =============================================================================
+
+
 @group(2) @binding(0) var atlasTexture: texture_2d<f32>;
 @group(2) @binding(1) var level2AtlasTexture: texture_2d<f32>;
 @group(2) @binding(2) var tileTypeLookup: texture_2d<f32>;
@@ -88,7 +90,6 @@ struct VertexOutput {
 @group(2) @binding(4) var numVariantsTex: texture_2d<f32>;
 @group(2) @binding(5) var textureSampler: sampler;
 @group(2) @binding(6) var nearestSampler: sampler;
-
 // =============================================================================
 // Helper Functions
 // =============================================================================
@@ -104,6 +105,21 @@ fn sampleRGBA32FNearest(tex: texture_2d<f32>, uv: vec2<f32>) -> vec4<f32> {
     return textureLoad(tex, clamp(coord, vec2<i32>(0), maxCoord), 0);
 }
 
+// Apply per-chunk atlas transform when sampling data atlases
+fn applyChunkAtlasUV(uv: vec2<f32>, tex: texture_2d<f32>) -> vec2<f32> {
+    if (fragUniforms.useAtlasMode == 0) {
+        return uv;
+    }
+    let texSize = vec2<f32>(textureDimensions(tex));
+    let halfPix = 0.5 / texSize;
+    // uvTransform is authored for the nominal atlas size (config.textureSize); adjust for real texture dims.
+    let nominalSize = fragUniforms.atlasTextureSize;
+    let scaleFix = nominalSize / texSize.x; // assume square atlases
+    let offset = fragUniforms.atlasUVOffset * scaleFix;
+    let scale = fragUniforms.atlasUVScale * scaleFix;
+    return offset + clamp(uv, halfPix, vec2<f32>(1.0) - halfPix) * scale;
+}
+
 // SPHERICAL TBN MATRIX
 fn buildSphericalTBN(sphereDir: vec3<f32>) -> mat3x3<f32> {
     let up = normalize(sphereDir);
@@ -117,7 +133,8 @@ fn buildSphericalTBN(sphereDir: vec3<f32>) -> mat3x3<f32> {
 }
 
 fn calculateNormal(input: VertexOutput) -> vec3<f32> {
-    let normalSample = sampleRGBA32FBilinear(normalTexture, input.vUv).xyz;
+    let uv = applyChunkAtlasUV(input.vUv, normalTexture);
+    let normalSample = sampleRGBA32FBilinear(normalTexture, uv).xyz;
     let tangentNormal = normalize(normalSample * 2.0 - 1.0);
     let TBN = buildSphericalTBN(input.vSphereDir);
     let worldNormal = normalize(TBN * tangentNormal);
@@ -163,7 +180,8 @@ fn sampleMicroTexture(input: VertexOutput, activeSeason: i32) -> vec4<f32> {
     let local = fract(tCoord);
     let worldTileCoord = fragUniforms.chunkOffset + tIdx;
     let tileUV = (tIdx + 0.5) / vec2<f32>(fragUniforms.chunkWidth, fragUniforms.chunkHeight);
-    let tileSample = sampleRGBA32FNearest(tileTexture, clamp(tileUV, vec2<f32>(0.0), vec2<f32>(1.0)));
+    let atlasTileUV = applyChunkAtlasUV(clamp(tileUV, vec2<f32>(0.0), vec2<f32>(1.0)), tileTexture);
+    let tileSample = sampleRGBA32FNearest(tileTexture, atlasTileUV);
     var tileId: f32;
     if (tileSample.r > 1.0) { tileId = tileSample.r; } 
     else { tileId = tileSample.r * 255.0; }
@@ -209,15 +227,18 @@ fn main(input: VertexOutput) -> @location(0) vec4<f32> {
     }
     
     if (DEBUG_MODE == 2) {
-        let height = sampleRGBA32FBilinear(heightTexture, input.vUv).r;
-        return vec4<f32>(vec3<f32>(height), 1.0);
+        let uv = applyChunkAtlasUV(input.vUv, heightTexture);
+        let height = sampleRGBA32FBilinear(heightTexture, uv).r;
+        let normalized = clamp(height / 120.0, 0.0, 1.0);
+        return vec4<f32>(vec3<f32>(normalized), 1.0);
     }
     
     if (DEBUG_MODE == 3) {
         let tCoord = input.vUv * vec2<f32>(fragUniforms.chunkWidth, fragUniforms.chunkHeight);
         let tIdx = floor(tCoord);
         let tileUV = (tIdx + 0.5) / vec2<f32>(fragUniforms.chunkWidth, fragUniforms.chunkHeight);
-        let tileSample = sampleRGBA32FNearest(tileTexture, clamp(tileUV, vec2<f32>(0.0), vec2<f32>(1.0)));
+        let atlasTileUV = applyChunkAtlasUV(clamp(tileUV, vec2<f32>(0.0), vec2<f32>(1.0)), tileTexture);
+        let tileSample = sampleRGBA32FNearest(tileTexture, atlasTileUV);
         var tileId: f32;
         if (tileSample.r > 1.0) { tileId = tileSample.r; }
         else { tileId = tileSample.r * 255.0; }
@@ -233,7 +254,8 @@ fn main(input: VertexOutput) -> @location(0) vec4<f32> {
     }
     
     if (DEBUG_MODE == 6) {
-        let tileSample = sampleRGBA32FBilinear(tileTexture, input.vUv);
+        let uv = applyChunkAtlasUV(input.vUv, tileTexture);
+        let tileSample = sampleRGBA32FBilinear(tileTexture, uv);
         return vec4<f32>(tileSample.rgb, 1.0);
     }
     

@@ -218,7 +218,7 @@ export class GameEngine {
             chunkSize: this.chunkSize,
             backendType: backendType
         });
-        await this.renderer.initialize(this.planetConfig);
+        await this.renderer.initialize(this.planetConfig, this.sphericalMapper);
     
         
         const actualApiName = this.renderer.getBackendType();

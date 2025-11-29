@@ -114,9 +114,13 @@ export class TerrainMaterialBuilder {
             finalAtlasUVScale = uvTransform.scale;
         }
 
+        // Capture nominal atlas size from the micro atlas (falls back to 2048)
+        const nominalAtlasSize = (atlasTextures.micro && atlasTextures.micro.width) || 2048;
+
         // Build Uniforms
         const uniforms = {
-            heightScale: { value: 50.0 },
+            // Use height map values directly (in meters)
+            heightScale: { value: 6.0 },
             // === PLANET PROJECTION ===
             planetRadius: { value: planetConfig.radius },
             planetOrigin: { value: planetConfig.origin },
@@ -127,6 +131,9 @@ export class TerrainMaterialBuilder {
             // Standard
             chunkOffset: { value: new THREE.Vector2(chunkOffsetX, chunkOffsetZ) },
             chunkSize: { value: chunkSize },
+            chunkWidth: { value: chunkSize },
+            chunkHeight: { value: chunkSize },
+            atlasTextureSize: { value: nominalAtlasSize },
             
             // Textures
             heightTexture: { value: cachedTextures.height },

@@ -933,10 +933,9 @@ _describeLayouts(layouts) {
         data[offset++] = aOff?.x || 0;
         data[offset++] = aOff?.y || 0;
         data[offset++] = uniforms.atlasUVScale?.value || 1.0;
-    
-        // FIX: Add heightScale - WAS MISSING!
         data[offset++] = uniforms.heightScale?.value || 50.0;
-    
+        data[offset++] = uniforms.atlasTextureSize?.value || 2048;
+
         return data;
     }
 

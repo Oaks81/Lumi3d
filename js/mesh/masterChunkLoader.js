@@ -271,7 +271,8 @@ export class MasterChunkLoader {
         const lodLevel = this.lodManager.getLODForChunkKey(
             chunkKeyStr, 
             cameraPosition, 
-            this.altitudeZoneManager
+            this.altitudeZoneManager,
+            planetConfig
         );
         chunkData.lodLevel = lodLevel;
 

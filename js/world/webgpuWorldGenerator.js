@@ -214,7 +214,14 @@ export class WebGPUWorldGenerator extends BaseWorldGenerator {
         for (let i = 0; i < chunkData.heights.length; i++) {
             chunkData.heights[i] = heightData[i * 4];
         }
-
+        if (chunkX === 0 && chunkY === 0) {
+            let minH = Infinity, maxH = -Infinity;
+            for (const h of chunkData.heights) {
+              if (h < minH) minH = h;
+              if (h > maxH) maxH = h;
+            }
+            console.log('[WebGPUTerrainGenerator] Chunk (0,0) height range:', { minH, maxH, count: chunkData.heights.length });
+          }
         // Tile Data
         const tileSize = this.chunkSize;
         chunkData.tiles = new Uint32Array(tileSize * tileSize);

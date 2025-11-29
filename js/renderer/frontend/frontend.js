@@ -24,7 +24,7 @@ export class Frontend {
 
         this.textureManager = options.textureManager;
         this.textureCache = options.textureCache;
-        this.chunkSize = options.chunkSize || 64;
+        this.chunkSize = options.chunkSize || 128;
 
         this.uniformManager = new UniformManager();
         this.genericMeshRenderer = null;
@@ -60,6 +60,7 @@ export class Frontend {
         this.lightManager = null;
         this.shadowRenderer = null;
         this.planetConfig = null;
+        this.sphericalMapper = null;
         this.orbitalSphereRenderer = null;
         
     }
@@ -368,8 +369,9 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
     }
 
 
-    async initialize(planetConfig = null) {
+    async initialize(planetConfig = null, sphericalMapper = null) {
         this.planetConfig = planetConfig;
+        this.sphericalMapper = sphericalMapper;
         if (this.backendType === 'webgpu' && navigator.gpu) {
             try {
                 this.backend = new WebGPUBackend(this.canvas);
@@ -422,7 +424,7 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
         this.uniformManager.uniforms.sunLightIntensity.value = 1.0;
         this.uniformManager.uniforms.sunLightColor.value.set(0xffffff);
         this.uniformManager.uniforms.sunLightDirection.value.set(0.5, 1.0, 0.3).normalize();
-    
+        this.lodManager.setPlanetaryConfig(this.planetConfig, this.sphericalMapper);
 
         if (this.planetConfig) {
             const { OrbitalSphereRenderer } = await import('../orbitalSphereRenderer.js');

@@ -31,6 +31,8 @@ struct VertexUniforms {
     
     // NEW: Height scale uniform (default 50.0)
     heightScale: f32,
+    // Nominal atlas size (e.g., 2048) for UV correction
+    atlasTextureSize: f32,
 }
 
 struct VertexInput {
@@ -73,11 +75,14 @@ fn getCubePoint(face: i32, uv: vec2<f32>) -> vec3<f32> {
 fn sampleHeightBilinear(uv: vec2<f32>) -> f32 {
     let texSize = vec2<f32>(textureDimensions(heightTexture));
     
-    // Transform UV if using atlas mode
+    // Transform UV if using atlas mode (correct for 2049px height atlases)
     var sampleUV = uv;
     if (uniforms.useAtlasMode > 0.5) {
         let halfPix = 0.5 / texSize;
-        sampleUV = uniforms.atlasUVOffset + clamp(uv, halfPix, vec2<f32>(1.0) - halfPix) * uniforms.atlasUVScale;
+        let scaleFix = uniforms.atlasTextureSize / texSize.x; // assume square atlases
+        let offset = uniforms.atlasUVOffset * scaleFix;
+        let scale = uniforms.atlasUVScale * scaleFix;
+        sampleUV = offset + clamp(uv, halfPix, vec2<f32>(1.0) - halfPix) * scale;
     }
     
     // Bilinear interpolation
@@ -120,8 +125,8 @@ fn main(input: VertexInput) -> VertexOutput {
     // 4. Calculate Final World Position
     // FIX: Use heightScale uniform instead of hardcoded 6.0
     var heightMultiplier = uniforms.heightScale;
-    if (heightMultiplier < 1.0) {
-        heightMultiplier = 50.0; // Fallback if not set
+    if (heightMultiplier < 0.0001) {
+        heightMultiplier = 1.0; // Fallback if not set
     }
     
     let radius = uniforms.planetRadius + (height * heightMultiplier);
