@@ -666,6 +666,32 @@ _describeLayouts(layouts) {
         return layouts;
     }
 
+    _buildLayoutsFromSpec(spec) {
+        return spec.map((group, idx) => this.device.createBindGroupLayout({
+            label: group.label || `CustomGroup${idx}`,
+            entries: group.entries.map(e => ({
+                binding: e.binding,
+                visibility: this._mapVisibility(e.visibility),
+                buffer: e.buffer,
+                sampler: e.sampler,
+                texture: e.texture
+            }))
+        }));
+    }
+
+    _mapVisibility(v) {
+        if (!v) return GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT;
+        if (typeof v === 'number') return v;
+        const parts = Array.isArray(v) ? v : v.toString().toLowerCase().split('|');
+        let mask = 0;
+        for (const p of parts) {
+            if (p.includes('vertex')) mask |= GPUShaderStage.VERTEX;
+            if (p.includes('fragment')) mask |= GPUShaderStage.FRAGMENT;
+            if (p.includes('compute')) mask |= GPUShaderStage.COMPUTE;
+        }
+        return mask || (GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT);
+    }
+
     _createBindGroups(material, uniforms) {
         const groups = [];
 

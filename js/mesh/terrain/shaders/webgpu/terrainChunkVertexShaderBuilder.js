@@ -1,3 +1,10 @@
+// js/mesh/terrain/shaders/webgpu/terrainChunkVertexShaderBuilder.js
+// FIXED VERSION - Spherical Planet Terrain
+// Changes:
+// 1. Increased height multiplier from 6.0 to 50.0 (configurable via uniform)
+// 2. Better height sampling with proper bilinear interpolation
+// 3. Added heightScale uniform for runtime adjustment
+
 export function buildTerrainChunkVertexShader() {
     return `
 struct VertexUniforms {
@@ -20,7 +27,10 @@ struct VertexUniforms {
     // Atlas / Height settings
     useAtlasMode: f32,
     atlasUVOffset: vec2<f32>,
-    atlasUVScale: f32
+    atlasUVScale: f32,
+    
+    // NEW: Height scale uniform (default 50.0)
+    heightScale: f32,
 }
 
 struct VertexInput {
@@ -38,11 +48,12 @@ struct VertexOutput {
     @location(4) vDistanceToCamera: f32,
     @location(5) vTileUv: vec2<f32>,
     @location(6) vWorldPos: vec2<f32>,
+    @location(7) vSphereDir: vec3<f32>,  // NEW: Pass sphere direction for TBN
 }
 
 @group(0) @binding(0) var<uniform> uniforms: VertexUniforms;
-@group(1) @binding(0) var heightTexture: texture_2d<f32>; // Bind Group 1, Binding 0
-@group(2) @binding(5) var textureSampler: sampler;        // Bind Group 2, Binding 5 (Shared sampler)
+@group(1) @binding(0) var heightTexture: texture_2d<f32>;
+@group(2) @binding(5) var textureSampler: sampler;
 
 // Helper: Convert Face + UV to a point on a Unit Cube
 fn getCubePoint(face: i32, uv: vec2<f32>) -> vec3<f32> {
@@ -58,50 +69,66 @@ fn getCubePoint(face: i32, uv: vec2<f32>) -> vec3<f32> {
     return vec3<f32>(-xy.x, xy.y, -1.0);                   // -Z 
 }
 
+// NEW: Proper bilinear height sampling
+fn sampleHeightBilinear(uv: vec2<f32>) -> f32 {
+    let texSize = vec2<f32>(textureDimensions(heightTexture));
+    
+    // Transform UV if using atlas mode
+    var sampleUV = uv;
+    if (uniforms.useAtlasMode > 0.5) {
+        let halfPix = 0.5 / texSize;
+        sampleUV = uniforms.atlasUVOffset + clamp(uv, halfPix, vec2<f32>(1.0) - halfPix) * uniforms.atlasUVScale;
+    }
+    
+    // Bilinear interpolation
+    let coord = sampleUV * texSize - 0.5;
+    let baseCoord = floor(coord);
+    let f = fract(coord);
+    
+    let c00 = vec2<i32>(baseCoord);
+    let c10 = c00 + vec2<i32>(1, 0);
+    let c01 = c00 + vec2<i32>(0, 1);
+    let c11 = c00 + vec2<i32>(1, 1);
+    
+    let maxCoord = vec2<i32>(texSize) - vec2<i32>(1);
+    
+    let h00 = textureLoad(heightTexture, clamp(c00, vec2<i32>(0), maxCoord), 0).r;
+    let h10 = textureLoad(heightTexture, clamp(c10, vec2<i32>(0), maxCoord), 0).r;
+    let h01 = textureLoad(heightTexture, clamp(c01, vec2<i32>(0), maxCoord), 0).r;
+    let h11 = textureLoad(heightTexture, clamp(c11, vec2<i32>(0), maxCoord), 0).r;
+    
+    let h0 = mix(h00, h10, f.x);
+    let h1 = mix(h01, h11, f.x);
+    
+    return mix(h0, h1, f.y);
+}
+
 @vertex
 fn main(input: VertexInput) -> VertexOutput {
     var output: VertexOutput;
 
     // 1. Calculate Face UV
-    // input.uv is [0,1] for the local chunk.
-    // We map this to the global 0..1 UV space of the entire Cube Face.
     let faceUV = uniforms.chunkLocation + input.uv * uniforms.chunkSizeUV;
     
     // 2. Project to Unit Sphere
-    // Get point on cube surface, then normalize it to get sphere direction
     let cubePoint = getCubePoint(uniforms.chunkFace, faceUV);
     let sphereDir = normalize(cubePoint);
     
-    // 3. Sample Height (Displacement) with mild box filter to tame moire
-    var height = 0.0;
-    var baseUV = input.uv;
-    if (uniforms.useAtlasMode > 0.5) {
-        let texSize = vec2<f32>(textureDimensions(heightTexture));
-        let halfPix = 0.5 / texSize;
-        // Stay inside the atlas slice
-        baseUV = uniforms.atlasUVOffset + clamp(input.uv, halfPix, vec2<f32>(1.0) - halfPix) * uniforms.atlasUVScale;
-    }
-    let texel = 0.5 / vec2<f32>(textureDimensions(heightTexture));
-    let offsets = array<vec2<f32>,4>(
-        vec2<f32>(-texel.x, -texel.y),
-        vec2<f32>( texel.x, -texel.y),
-        vec2<f32>(-texel.x,  texel.y),
-        vec2<f32>( texel.x,  texel.y)
-    );
-    for (var i = 0; i < 4; i = i + 1) {
-        height = height + textureSampleLevel(heightTexture, textureSampler, baseUV + offsets[i], 0.0).r;
-    }
-    height = height * 0.25;
+    // 3. Sample Height with proper bilinear interpolation
+    let height = sampleHeightBilinear(input.uv);
 
     // 4. Calculate Final World Position
-    // Radius = PlanetRadius + Height * Scale (e.g., 50000 + h * 50)
-    // Moderate multiplier for visible relief without exaggeration
-    let heightMultiplier = 6.0; 
-    let radius = uniforms.planetRadius + (height * heightMultiplier);
+    // FIX: Use heightScale uniform instead of hardcoded 6.0
+    var heightMultiplier = uniforms.heightScale;
+    if (heightMultiplier < 1.0) {
+        heightMultiplier = 50.0; // Fallback if not set
+    }
     
+    let radius = uniforms.planetRadius + (height * heightMultiplier);
     let worldPosition = uniforms.planetOrigin + sphereDir * radius;
 
     output.vWorldPosition = worldPosition;
+    output.vSphereDir = sphereDir; // Pass for TBN calculation in fragment shader
 
     // 5. Standard Matrices
     let viewPos = uniforms.viewMatrix * vec4<f32>(worldPosition, 1.0);
@@ -114,9 +141,7 @@ fn main(input: VertexInput) -> VertexOutput {
     output.vTileUv = input.uv * uniforms.chunkSize;
     output.vWorldPos = vec2<f32>(faceUV.x * uniforms.planetRadius, faceUV.y * uniforms.planetRadius);
 
-    // 7. Normal
-    // For a planet, the "Up" direction is the Sphere Direction.
-    // The Fragment shader can perturb this with Normal Maps later.
+    // 7. Normal - sphere direction is the base "up" for this vertex
     output.vNormal = sphereDir;
 
     return output;

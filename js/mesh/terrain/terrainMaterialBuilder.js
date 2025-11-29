@@ -99,6 +99,7 @@ export class TerrainMaterialBuilder {
 
         // Build Uniforms
         const uniforms = {
+            heightScale: { value: 50.0 },
             // === PLANET PROJECTION ===
             planetRadius: { value: planetConfig.radius },
             planetOrigin: { value: planetConfig.origin },
