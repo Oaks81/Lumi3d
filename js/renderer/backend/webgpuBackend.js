@@ -891,105 +891,122 @@ _describeLayouts(layouts) {
     }
 
     _packVertexUniforms(uniforms) {
-        // Use a shared buffer so we can write ints correctly (e.g. chunkFace)
-        const buffer = new ArrayBuffer(80 * 4); // 80 floats worth of space
+        const buffer = new ArrayBuffer(80 * 4);
         const data = new Float32Array(buffer);
         const intView = new Int32Array(buffer);
         let offset = 0;
-
+    
         const writeMat = (m) => {
             if (m?.elements) data.set(m.elements, offset);
             else data.set([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1], offset);
             offset += 16;
         };
-
-        // 1. Matrices (0-47) - 192 bytes
+    
         writeMat(uniforms.modelMatrix?.value);
         writeMat(uniforms.viewMatrix?.value);
         writeMat(uniforms.projectionMatrix?.value);
-
-        // 2. Chunk Props (48-51) - 16 bytes
+    
         data[offset++] = uniforms.chunkOffset?.value?.x || 0;
         data[offset++] = uniforms.chunkOffset?.value?.y || 0;
         data[offset++] = uniforms.chunkSize?.value || 128;
         data[offset++] = uniforms.macroScale?.value || 0.1;
-
-        // 3. Planet Radius (52) - 4 bytes
+    
         data[offset++] = uniforms.planetRadius?.value || 50000;
-
-        // === CRITICAL FIX: PADDING ===
-        // The next field is 'planetOrigin' (vec3). In WGSL uniform buffers, 
-        // vec3 requires 16-byte alignment.
-        // Current offset is 53 floats (212 bytes). 
-        // Next 16-byte boundary is at 56 floats (224 bytes).
-        // We must skip 3 floats.
-        data[offset++] = 0; // Padding
-        data[offset++] = 0; // Padding
-        data[offset++] = 0; // Padding
-
-        // 4. Planet Origin (56-58)
+        data[offset++] = 0; // padding
+        data[offset++] = 0;
+        data[offset++] = 0;
+    
         const origin = uniforms.planetOrigin?.value;
         data[offset++] = origin?.x || 0;
         data[offset++] = origin?.y || 0;
         data[offset++] = origin?.z || 0;
         
-        // 5. Face Info (59-62)
-        // Face is an i32 in WGSL, so write the raw int bits
         intView[offset++] = uniforms.chunkFace?.value ?? -1; 
         
-        // Chunk Location (vec2)
         const cLoc = uniforms.chunkLocation?.value;
         data[offset++] = cLoc?.x || 0;
         data[offset++] = cLoc?.y || 0;
-        
         data[offset++] = uniforms.chunkSizeUV?.value || 1.0;
-
-        // 6. Atlas Params (63-66)
+    
         data[offset++] = uniforms.useAtlasMode?.value || 0;
         const aOff = uniforms.atlasUVOffset?.value;
         data[offset++] = aOff?.x || 0;
         data[offset++] = aOff?.y || 0;
         data[offset++] = uniforms.atlasUVScale?.value || 1.0;
-
+    
+        // FIX: Add heightScale - WAS MISSING!
+        data[offset++] = uniforms.heightScale?.value || 50.0;
+    
         return data;
     }
 
+
     _packFragmentUniforms(uniforms) {
-        // Shared buffer so integer uniforms keep correct bit patterns
         const buffer = new ArrayBuffer(256 * 4);
         const data = new Float32Array(buffer);
         const intView = new Int32Array(buffer);
         let offset = 0;
-
-        data[offset++] = uniforms.chunkOffset?.value?.x || 0; data[offset++] = uniforms.chunkOffset?.value?.y || 0; data[offset++] = uniforms.chunkSize?.value || 128; data[offset++] = uniforms.chunkWidth?.value || 128;
-        data[offset++] = uniforms.chunkHeight?.value || 128; data[offset++] = uniforms.tileScale?.value || 1; data[offset++] = uniforms.level2Blend?.value || 0.7; data[offset++] = uniforms.macroScale?.value || 0.1;
-        intView[offset++] = uniforms.currentSeason?.value ?? 0; intView[offset++] = uniforms.nextSeason?.value ?? 1; data[offset++] = uniforms.seasonTransition?.value || 0; data[offset++] = uniforms.maxTileTypes?.value || 256;
-        intView[offset++] = uniforms.lodLevel?.value ?? 0; intView[offset++] = uniforms.geometryLOD?.value ?? 0; data[offset++] = uniforms.splatLODBias?.value || 0; data[offset++] = uniforms.macroLODBias?.value || 0;
-        data[offset++] = uniforms.detailFade?.value || 1; data[offset++] = uniforms.enableSplatLayer?.value || 1; data[offset++] = uniforms.enableMacroLayer?.value || 1; data[offset++] = uniforms.enableClusteredLights?.value || 1;
-
-        const sunColor = uniforms.sunLightColor?.value; data[offset++] = sunColor?.r ?? 1; data[offset++] = sunColor?.g ?? 1; data[offset++] = sunColor?.b ?? 1; data[offset++] = uniforms.sunLightIntensity?.value ?? 1;
-        const sunDir = uniforms.sunLightDirection?.value; data[offset++] = sunDir?.x ?? 0; data[offset++] = sunDir?.y ?? 1; data[offset++] = sunDir?.z ?? 0; data[offset++] = 0;
-        const moonColor = uniforms.moonLightColor?.value; data[offset++] = moonColor?.r ?? 1; data[offset++] = moonColor?.g ?? 1; data[offset++] = moonColor?.b ?? 1; data[offset++] = uniforms.moonLightIntensity?.value ?? 0.2;
-        const moonDir = uniforms.moonLightDirection?.value; data[offset++] = moonDir?.x ?? 0; data[offset++] = moonDir?.y ?? 1; data[offset++] = moonDir?.z ?? 0; data[offset++] = 0;
-        const ambColor = uniforms.ambientLightColor?.value; data[offset++] = ambColor?.r ?? 0.2; data[offset++] = ambColor?.g ?? 0.2; data[offset++] = ambColor?.b ?? 0.2; data[offset++] = uniforms.ambientLightIntensity?.value ?? 0.5;
-        const skyColor = uniforms.skyAmbientColor?.value; data[offset++] = skyColor?.r ?? 0.5; data[offset++] = skyColor?.g ?? 0.7; data[offset++] = skyColor?.b ?? 1.0; data[offset++] = 0;
-        const gndColor = uniforms.groundAmbientColor?.value; data[offset++] = gndColor?.r ?? 0.2; data[offset++] = gndColor?.g ?? 0.2; data[offset++] = gndColor?.b ?? 0.2; data[offset++] = 0;
-        const fogColor = uniforms.fogColor?.value; data[offset++] = fogColor?.r ?? 0.7; data[offset++] = fogColor?.g ?? 0.7; data[offset++] = fogColor?.b ?? 0.7; data[offset++] = uniforms.fogDensity?.value ?? 0.005;
-        const camPos = uniforms.cameraPosition?.value; data[offset++] = camPos?.x ?? 0; data[offset++] = camPos?.y ?? 0; data[offset++] = camPos?.z ?? 0; data[offset++] = uniforms.cameraNear?.value ?? 0.1;
-        data[offset++] = uniforms.cameraFar?.value ?? 1000; data[offset++] = uniforms.thunderLightIntensity?.value ?? 0; data[offset++] = uniforms.weatherIntensity?.value ?? 0; data[offset++] = uniforms.currentWeather?.value ?? 0;
-        const thunColor = uniforms.thunderLightColor?.value; data[offset++] = thunColor?.r ?? 1; data[offset++] = thunColor?.g ?? 1; data[offset++] = thunColor?.b ?? 1; data[offset++] = 0;
-        const plyColor = uniforms.playerLightColor?.value; data[offset++] = plyColor?.r ?? 1; data[offset++] = plyColor?.g ?? 1; data[offset++] = plyColor?.b ?? 1; data[offset++] = uniforms.playerLightIntensity?.value ?? 0;
-        const plyPos = uniforms.playerLightPosition?.value; data[offset++] = plyPos?.x ?? 0; data[offset++] = plyPos?.y ?? 0; data[offset++] = plyPos?.z ?? 0; data[offset++] = uniforms.playerLightDistance?.value ?? 10;
-        data[offset++] = uniforms.receiveShadow?.value ?? 1; data[offset++] = uniforms.isFeature?.value ?? 0; intView[offset++] = uniforms.numCascades?.value ?? 3; data[offset++] = uniforms.shadowBias?.value ?? 0.0001;
-        data[offset++] = uniforms.shadowNormalBias?.value ?? 0.1; data[offset++] = uniforms.shadowMapSize?.value ?? 2048; data[offset++] = 0; data[offset++] = 0;
-        const splits = uniforms.cascadeSplits?.value; data[offset++] = splits?.x ?? 0; data[offset++] = splits?.y ?? 0; data[offset++] = splits?.z ?? 0; data[offset++] = 0;
-        const cDims = uniforms.clusterDimensions?.value; data[offset++] = cDims?.x ?? 1; data[offset++] = cDims?.y ?? 1; data[offset++] = cDims?.z ?? 1; data[offset++] = uniforms.numLights?.value ?? 0;
-        const atlasSize = uniforms.atlasTextureSize?.value; data[offset++] = atlasSize?.x ?? 1024; data[offset++] = atlasSize?.y ?? 1024;
-        const l2Size = uniforms.level2AtlasTextureSize?.value; data[offset++] = l2Size?.x ?? 1024; data[offset++] = l2Size?.y ?? 1024;
-
-        const writeMat = (m) => { if (m?.elements) { for(let i=0;i<16;i++) data[offset++] = m.elements[i]; } else { const id=[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]; for(let i=0;i<16;i++) data[offset++] = id[i]; } };
-        writeMat(uniforms.shadowMatrixCascade0?.value); writeMat(uniforms.shadowMatrixCascade1?.value); writeMat(uniforms.shadowMatrixCascade2?.value);
-
+    
+        // --- cameraPosition (vec3) + time (f32) = 16 bytes ---
+        const camPos = uniforms.cameraPosition?.value;
+        data[offset++] = camPos?.x ?? 0;
+        data[offset++] = camPos?.y ?? 0;
+        data[offset++] = camPos?.z ?? 0;
+        data[offset++] = uniforms.time?.value ?? 0;
+    
+        // --- chunkOffset (vec2) + chunkWidth (f32) + chunkHeight (f32) = 16 bytes ---
+        data[offset++] = uniforms.chunkOffset?.value?.x ?? 0;
+        data[offset++] = uniforms.chunkOffset?.value?.y ?? 0;
+        data[offset++] = uniforms.chunkWidth?.value ?? 128;
+        data[offset++] = uniforms.chunkHeight?.value ?? 128;
+    
+        // --- lightDirection (vec3) + padding = 16 bytes ---
+        const lightDir = uniforms.sunLightDirection?.value;
+        data[offset++] = lightDir?.x ?? 0;
+        data[offset++] = lightDir?.y ?? 1;
+        data[offset++] = lightDir?.z ?? 0;
+        data[offset++] = 0;
+    
+        // --- lightColor (vec3) + padding = 16 bytes ---
+        const lightColor = uniforms.sunLightColor?.value;
+        data[offset++] = lightColor?.r ?? 1;
+        data[offset++] = lightColor?.g ?? 1;
+        data[offset++] = lightColor?.b ?? 1;
+        data[offset++] = 0;
+    
+        // --- ambientColor (vec3) + padding = 16 bytes ---
+        const ambientColor = uniforms.ambientLightColor?.value;
+        data[offset++] = ambientColor?.r ?? 0.3;
+        data[offset++] = ambientColor?.g ?? 0.3;
+        data[offset++] = ambientColor?.b ?? 0.4;
+        data[offset++] = 0;
+    
+        // --- enableSplatLayer, enableMacroLayer, geometryLOD, currentSeason ---
+        data[offset++] = uniforms.enableSplatLayer?.value ?? 1;
+        data[offset++] = uniforms.enableMacroLayer?.value ?? 1;
+        intView[offset++] = uniforms.geometryLOD?.value ?? 0;
+        intView[offset++] = uniforms.currentSeason?.value ?? 0;
+    
+        // --- nextSeason, seasonTransition, atlasTextureSize, padding ---
+        intView[offset++] = uniforms.nextSeason?.value ?? 1;
+        data[offset++] = uniforms.seasonTransition?.value ?? 0;
+        const atlasSize = uniforms.atlasTextureSize?.value;
+        data[offset++] = typeof atlasSize === 'object' ? (atlasSize?.x ?? 1024) : (atlasSize ?? 1024);
+        data[offset++] = 0;
+    
+        // --- atlasUVOffset (vec2) + atlasUVScale + useAtlasMode ---
+        const atlasOffset = uniforms.atlasUVOffset?.value;
+        data[offset++] = atlasOffset?.x ?? 0;
+        data[offset++] = atlasOffset?.y ?? 0;
+        data[offset++] = uniforms.atlasUVScale?.value ?? 1;
+        intView[offset++] = uniforms.useAtlasMode?.value ?? 0;
+    
+        // --- isFeature + padding ---
+        data[offset++] = uniforms.isFeature?.value ?? 0;
+        data[offset++] = 0;
+        data[offset++] = 0;
+        data[offset++] = 0;
+    
         return data;
     }
 

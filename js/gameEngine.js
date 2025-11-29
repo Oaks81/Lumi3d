@@ -580,7 +580,7 @@ getTerrainHeightAt(gameX, gameY, gameZ = null) {
     async render(deltaTime) {
         if (!this.isGameActive) return;
         if (this.renderer && this.gameState) {
-            this.renderer.render(this.gameState, this.environmentState, deltaTime);
+            this.renderer.render(this.gameState, this.environmentState, deltaTime, this.planetConfig, this.sphericalMapper);
         }
     }
 

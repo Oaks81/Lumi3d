@@ -12,6 +12,7 @@ export class TerrainMeshManager {
         
         this.chunkMeshes = new Map();
         this.atlasConfig = null;
+        
     }
 
     /**
@@ -21,7 +22,7 @@ export class TerrainMeshManager {
         this.atlasConfig = config;
     }
 
-    async addChunk(chunkData, environmentState) {
+    async addChunk(chunkData, environmentState, chunkKeyStr, planetConfig, sphericalMapper) {
         // Unique key logic handling spherical faces
         let chunkKey;
         if (chunkData.face !== undefined && chunkData.face !== null) {
@@ -31,19 +32,17 @@ export class TerrainMeshManager {
             // Flat mode
             chunkKey = `${chunkData.chunkX},${chunkData.chunkY}`;
         }
-         /*
-        const chunkKey = chunkData.isSpherical ? 
-            `${chunkData.face}:${chunkData.chunkX},${chunkData.chunkY}:${chunkData.lodLevel||0}` : 
-            `${chunkData.chunkX},${chunkData.chunkY}`;
-*/
+
+
+
         if (this.chunkMeshes.has(chunkKey)) {
             return this.chunkMeshes.get(chunkKey);
         }
-
         // 1. Get Textures (Atlas or Legacy)
         const textureInfo = this._getChunkTextures(chunkData.chunkX, chunkData.chunkY, chunkData);
         
         if (!textureInfo.valid) {
+            console.log("bummer");
             // Warn only once per chunk
             if (!this._warnedChunks) this._warnedChunks = new Set();
             if (!this._warnedChunks.has(chunkKey)) {
@@ -55,11 +54,61 @@ export class TerrainMeshManager {
 
         // 2. Calculate LOD
         const cameraPos = this.uniformManager.uniforms.cameraPosition?.value || new THREE.Vector3();
-        const lodLevel = this.lodManager.getLODForChunkKey(
-            `${chunkData.chunkX},${chunkData.chunkY}`, 
-            cameraPos, 
-            null
-        );
+
+        let lodLevel = 0;
+        const isSpherical = chunkData.face !== undefined && chunkData.face !== null;
+       
+        if (isSpherical &&  planetConfig && sphericalMapper) {
+            // SPHERICAL MODE - Calculate 3D distance to chunk center on sphere
+            const chunksPerFace = sphericalMapper.chunksPerFace;
+            const planetRadius = planetConfig.radius;
+            const origin = planetConfig.origin;
+            
+            // Get chunk center UV on face
+            const u = (chunkData.chunkX + 0.5) / chunksPerFace;
+            const v = (chunkData.chunkY + 0.5) / chunksPerFace;
+            
+            // Convert to sphere position
+            const cubePoint = this. getCubePoint(chunkData.face, u, v);
+    
+            const len = Math.sqrt(cubePoint.x * cubePoint.x + cubePoint.y * cubePoint.y + cubePoint.z * cubePoint.z);
+            const sphereDir = {
+                x: cubePoint.x / len,
+                y: cubePoint.y / len,
+                z: cubePoint.z / len
+            };
+            
+            const worldPos = new THREE.Vector3(
+                origin.x + sphereDir.x * planetRadius,
+                origin.y + sphereDir.y * planetRadius,
+                origin.z + sphereDir.z * planetRadius
+            );
+            
+            // Calculate actual 3D distance
+            const distance = cameraPos.distanceTo(worldPos);
+            lodLevel = this.lodManager.getLODForDistance(distance);
+            
+            // Debug log first few chunks
+            if (!this._lodDebugCount) this._lodDebugCount = 0;
+            if (true){//this._lodDebugCount < 5) {
+                console.log('[TerrainMeshManager] Spherical LOD:', {
+                    chunk: `${chunkData.face}:${chunkData.chunkX},${chunkData.chunkY}`,
+                    distance: distance.toFixed(0),
+                    lodLevel,
+                    cameraPos: { x: cameraPos.x.toFixed(0), y: cameraPos.y.toFixed(0), z: cameraPos.z.toFixed(0) },
+                    chunkWorldPos: { x: worldPos.x.toFixed(0), y: worldPos.y.toFixed(0), z: worldPos.z.toFixed(0) }
+                });
+                this._lodDebugCount++;
+            }
+        } else {
+            console.log("FLAT LOD");
+            // FLAT MODE - original calculation
+            lodLevel = this.lodManager.getLODForChunkKey(
+                `${chunkData.chunkX},${chunkData.chunkY}`,
+                cameraPos,
+                null
+            );
+        }
 
         // 3. Build Geometry
         // Uses your custom TerrainGeometryBuilder for the Backend
@@ -117,6 +166,19 @@ export class TerrainMeshManager {
         }
         this.chunkMeshes.set(chunkKey, meshEntry);
         return meshEntry;
+    }
+
+    getCubePoint(face, u, v) {
+        const xy = { x: u * 2.0 - 1.0, y: v * 2.0 - 1.0 };
+        switch (face) {
+            case 0: return { x: 1.0, y: xy.y, z: -xy.x };  // +X
+            case 1: return { x: -1.0, y: xy.y, z: xy.x };  // -X
+            case 2: return { x: xy.x, y: 1.0, z: -xy.y };  // +Y
+            case 3: return { x: xy.x, y: -1.0, z: xy.y };  // -Y
+            case 4: return { x: xy.x, y: xy.y, z: 1.0 };   // +Z
+            case 5: return { x: -xy.x, y: xy.y, z: -1.0 }; // -Z
+            default: return { x: 0, y: 1, z: 0 };
+        }
     }
 
     _getChunkTextures(chunkX, chunkY, chunkData) {

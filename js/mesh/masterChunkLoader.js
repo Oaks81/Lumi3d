@@ -80,12 +80,13 @@ export class MasterChunkLoader {
     /**
      * Main update loop called by Frontend
      */
-    async update(cameraPosition, terrain, deltaTime) {
+    async update(cameraPosition, terrain, deltaTime, planetConfig, sphericalMapper) {
+
         // 1. Queue operations based on camera distance
         this.queueChunkOperations(cameraPosition, terrain);
         
         // 2. Process the async load/unload queues
-        await this.processQueues(terrain);
+        await this.processQueues(terrain, planetConfig, sphericalMapper);
         
         // 3. Periodic cache cleanup
         const now = performance.now();
@@ -157,7 +158,7 @@ export class MasterChunkLoader {
         this.loadQueue.sortByPriority();
     }
 
-    async processQueues(terrain) {
+    async processQueues(terrain, planetConfig, sphericalMapper) {
         const startTime = performance.now();
         const maxTime = 8; // ms per frame budget for chunk ops
 
@@ -167,7 +168,7 @@ export class MasterChunkLoader {
             this.debugStats.unloadsThisSecond++;
             if (performance.now() - startTime > maxTime) break;
         }
-
+      
 
         if (performance.now() - startTime < maxTime) {
             const loads = this.loadQueue.getNextLoads(3);
@@ -178,7 +179,7 @@ export class MasterChunkLoader {
                 const camPos = cached?.cameraPosition || { x: 0, y: 0, z: 0 };
 
                 if (chunkData) {
-                    await this.loadChunkSync(chunkKeyStr, chunkData, camPos);
+                    await this.loadChunkSync(chunkKeyStr, chunkData, camPos, planetConfig, sphericalMapper);
                     this.chunkDataCache.delete(chunkKeyStr);
                     this.debugStats.loadsThisSecond++;
                 }
@@ -201,7 +202,7 @@ export class MasterChunkLoader {
     /**
      * Load a chunk synchronously (GPU upload happens here)
      */
-    async loadChunkSync(chunkKeyStr, chunkData, cameraPosition) {
+    async loadChunkSync(chunkKeyStr, chunkData, cameraPosition, planetConfig, sphericalMapper) {
         if (!chunkData) {
             console.error(`loadChunkSync: No chunk data for ${chunkKeyStr}`);
             return;
@@ -260,7 +261,7 @@ export class MasterChunkLoader {
         chunkData.chunkY = chunkY;
         if (face !== null) chunkData.face = face;
 
-        const meshEntry = await this.terrainMeshManager.addChunk(chunkData, environmentState, chunkKeyStr);
+        const meshEntry = await this.terrainMeshManager.addChunk(chunkData, environmentState, chunkKeyStr, planetConfig, sphericalMapper);
 
         if (!meshEntry) {
             console.error(`Failed to create mesh for ${chunkKeyStr}`);

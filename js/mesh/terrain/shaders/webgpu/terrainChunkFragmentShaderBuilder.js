@@ -6,6 +6,18 @@
 // 3. Fixed tile ID sampling with proper format detection
 // 4. Added vSphereDir input for correct tangent space
 
+// js/mesh/terrain/shaders/webgpu/terrainChunkFragmentShaderBuilder.js
+// FIXED VERSION - Corrected Group 2 bindings to match backend
+//
+// CRITICAL FIX: The backend binds textures in this order for Group 2:
+//   binding 0 = atlasTexture
+//   binding 1 = level2AtlasTexture      <-- WAS WRONG (shader had tileTypeLookup here)
+//   binding 2 = tileTypeLookup          <-- MOVED HERE
+//   binding 3 = macroTileTypeLookup
+//   binding 4 = numVariantsTex
+//   binding 5 = linear sampler
+//   binding 6 = nearest sampler
+
 export function buildTerrainChunkFragmentShader(options = {}) {
     const maxLightIndices = options.maxLightIndices || 8192;
     
@@ -19,6 +31,7 @@ export function buildTerrainChunkFragmentShader(options = {}) {
 // 4 = Visualize UVs (RG = UV coordinates)
 // 5 = Visualize sphere direction (RGB = sphereDir)
 // 6 = Visualize raw tile texture (no processing)
+// 7 = Visualize lookup texture (verify binding is correct)
 // ============================================================================
 const DEBUG_MODE: i32 = 0;
 
@@ -56,14 +69,29 @@ struct VertexOutput {
     @location(7) vSphereDir: vec3<f32>,
 }
 
+// Group 0: Uniform Buffers
 @group(0) @binding(1) var<uniform> fragUniforms: FragmentUniforms;
+
+// Group 1: Per-Chunk Textures
 @group(1) @binding(0) var heightTexture: texture_2d<f32>;
 @group(1) @binding(1) var normalTexture: texture_2d<f32>;
 @group(1) @binding(2) var tileTexture: texture_2d<f32>;
 @group(1) @binding(3) var splatDataMap: texture_2d<f32>;
+
+// =============================================================================
+// Group 2: Atlas Textures & Lookups - FIXED to match backend binding order!
+// =============================================================================
 @group(2) @binding(0) var atlasTexture: texture_2d<f32>;
-@group(2) @binding(1) var tileTypeLookup: texture_2d<f32>;
+@group(2) @binding(1) var level2AtlasTexture: texture_2d<f32>;
+@group(2) @binding(2) var tileTypeLookup: texture_2d<f32>;
+@group(2) @binding(3) var macroTileTypeLookup: texture_2d<f32>;
+@group(2) @binding(4) var numVariantsTex: texture_2d<f32>;
 @group(2) @binding(5) var textureSampler: sampler;
+@group(2) @binding(6) var nearestSampler: sampler;
+
+// =============================================================================
+// Helper Functions
+// =============================================================================
 
 fn sampleRGBA32FBilinear(tex: texture_2d<f32>, uv: vec2<f32>) -> vec4<f32> {
     return textureSampleLevel(tex, textureSampler, uv, 0.0);
@@ -158,57 +186,83 @@ fn debugTileIdColor(tileId: f32) -> vec3<f32> {
     if (id == 4) { return vec3<f32>(0.4, 0.3, 0.2); }
     if (id == 5) { return vec3<f32>(0.6, 0.6, 0.6); }
     if (id == 6) { return vec3<f32>(0.1, 0.4, 0.1); }
-    if (id == 7) { return vec3<f32>(0.5, 0.5, 0.5); }
-    if (id == 8) { return vec3<f32>(0.6, 0.5, 0.4); }
-    if (id >= 100) { return vec3<f32>(1.0, 0.0, 1.0); }
-    return vec3<f32>(1.0, 1.0, 0.0);
+    if (id == 7) { return vec3<f32>(0.95, 0.95, 1.0); }
+    if (id == 8) { return vec3<f32>(0.5, 0.4, 0.3); }
+    if (id == 9) { return vec3<f32>(0.3, 0.3, 0.35); }
+    if (id == 10) { return vec3<f32>(0.6, 0.5, 0.3); }
+    let h = fract(sin(f32(id) * 12.9898) * 43758.5453);
+    return vec3<f32>(h, fract(h * 2.3), fract(h * 3.7));
 }
+
+// =============================================================================
+// Main Fragment Function
+// =============================================================================
 
 @fragment
 fn main(input: VertexOutput) -> @location(0) vec4<f32> {
-    if (DEBUG_MODE == 5) { return vec4<f32>(input.vSphereDir * 0.5 + 0.5, 1.0); }
-    if (DEBUG_MODE == 4) { return vec4<f32>(input.vUv.x, input.vUv.y, 0.0, 1.0); }
-    
-    let N = calculateNormal(input);
-    
-    if (DEBUG_MODE == 1) { return vec4<f32>(N * 0.5 + 0.5, 1.0); }
-    if (DEBUG_MODE == 2) {
-        let h = sampleRGBA32FBilinear(heightTexture, input.vUv).r;
-        return vec4<f32>(vec3<f32>(h / 100.0), 1.0);
+    let activeSeason = select(fragUniforms.nextSeason, fragUniforms.currentSeason, fragUniforms.seasonTransition < 0.5);
+
+    // DEBUG MODES
+    if (DEBUG_MODE == 1) {
+        let normal = calculateNormal(input);
+        return vec4<f32>(normal * 0.5 + 0.5, 1.0);
     }
+    
+    if (DEBUG_MODE == 2) {
+        let height = sampleRGBA32FBilinear(heightTexture, input.vUv).r;
+        return vec4<f32>(vec3<f32>(height), 1.0);
+    }
+    
     if (DEBUG_MODE == 3) {
-        let tileUV = (floor(input.vUv * vec2<f32>(fragUniforms.chunkWidth, fragUniforms.chunkHeight)) + 0.5) 
-                   / vec2<f32>(fragUniforms.chunkWidth, fragUniforms.chunkHeight);
-        let tileSample = sampleRGBA32FNearest(tileTexture, tileUV);
-        var tileId = tileSample.r;
-        if (tileId <= 1.0) { tileId = tileId * 255.0; }
+        let tCoord = input.vUv * vec2<f32>(fragUniforms.chunkWidth, fragUniforms.chunkHeight);
+        let tIdx = floor(tCoord);
+        let tileUV = (tIdx + 0.5) / vec2<f32>(fragUniforms.chunkWidth, fragUniforms.chunkHeight);
+        let tileSample = sampleRGBA32FNearest(tileTexture, clamp(tileUV, vec2<f32>(0.0), vec2<f32>(1.0)));
+        var tileId: f32;
+        if (tileSample.r > 1.0) { tileId = tileSample.r; }
+        else { tileId = tileSample.r * 255.0; }
         return vec4<f32>(debugTileIdColor(tileId), 1.0);
     }
+    
+    if (DEBUG_MODE == 4) {
+        return vec4<f32>(input.vUv.x, input.vUv.y, 0.0, 1.0);
+    }
+    
+    if (DEBUG_MODE == 5) {
+        return vec4<f32>(input.vSphereDir * 0.5 + 0.5, 1.0);
+    }
+    
     if (DEBUG_MODE == 6) {
-        let tileSample = sampleRGBA32FNearest(tileTexture, input.vUv);
+        let tileSample = sampleRGBA32FBilinear(tileTexture, input.vUv);
         return vec4<f32>(tileSample.rgb, 1.0);
     }
     
-    var activeSeason = fragUniforms.currentSeason;
-    if (fragUniforms.seasonTransition >= 0.5) { activeSeason = fragUniforms.nextSeason; }
-    
+    if (DEBUG_MODE == 7) {
+        let lookupSize = vec2<f32>(textureDimensions(tileTypeLookup));
+        let coord = vec2<i32>(input.vUv * lookupSize);
+        let lookupSample = textureLoad(tileTypeLookup, coord, 0);
+        return vec4<f32>(lookupSample.rgb * 10.0, 1.0);
+    }
+
+    // NORMAL RENDERING
     let microSample = sampleMicroTexture(input, activeSeason);
-    if (microSample.a < 0.0) { discard; }
     
-    var rgb = microSample.rgb;
+    if (microSample.a < 0.0) {
+        discard;
+    }
+    
+    var baseColor = microSample.rgb;
+    let worldNormal = calculateNormal(input);
     let lightDir = normalize(fragUniforms.lightDirection);
-    let NdotL = max(dot(N, lightDir), 0.0);
-    let diffuse = NdotL * fragUniforms.lightColor;
-    let ambient = fragUniforms.ambientColor;
-    rgb = rgb * (diffuse + ambient);
+    let NdotL = max(dot(worldNormal, lightDir), 0.0);
+    let ambient = fragUniforms.ambientColor * 0.3;
+    let diffuse = fragUniforms.lightColor * NdotL * 0.7;
+    var finalColor = baseColor * (ambient + diffuse);
+    let fogFactor = 1.0 - exp(-input.vDistanceToCamera * 0.00005);
+    let fogColor = vec3<f32>(0.6, 0.7, 0.8);
+    finalColor = mix(finalColor, fogColor, clamp(fogFactor, 0.0, 0.5));
     
-    let fogStart = 500.0;
-    let fogEnd = 5000.0;
-    let fogColor = vec3<f32>(0.7, 0.8, 0.9);
-    let fogFactor = clamp((input.vDistanceToCamera - fogStart) / (fogEnd - fogStart), 0.0, 0.7);
-    rgb = mix(rgb, fogColor, fogFactor);
-    
-    return vec4<f32>(rgb, 1.0);
+    return vec4<f32>(finalColor, 1.0);
 }
 `;
 }

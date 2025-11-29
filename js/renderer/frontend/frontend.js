@@ -323,7 +323,8 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
         console.log('MasterChunkLoader initialized successfully');
     }
     
-    async updateChunks(gameState, environmentState, deltaTime) {
+    async updateChunks(gameState, environmentState, deltaTime, planetConfig, sphericalMapper) {
+
         if (!this.masterChunkLoader) {
             console.warn('MasterChunkLoader not initialized yet');
             return;
@@ -336,7 +337,9 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
         await this.masterChunkLoader.update(
             this.camera.position,
             gameState.terrain,
-            deltaTime
+            deltaTime,
+            planetConfig,
+            sphericalMapper,
         );
     
         this.uniformManager.updateFromEnvironmentState(environmentState);
@@ -456,15 +459,15 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
     }
 
 
-    async render(gameState, environmentState, deltaTime) {
+    async render(gameState, environmentState, deltaTime, planetConfig, sphericalMapper) {
         if (!this.textureManager?.loaded || !gameState.terrain) return;
     
         this.backend.device.pushErrorScope('validation');
     
         this.frameCount++;
-    
+  
         this.updateCamera(gameState);
-        await this.updateChunks(gameState, environmentState, deltaTime);
+        await this.updateChunks(gameState, environmentState, deltaTime, planetConfig, sphericalMapper);
         this.updateLighting(environmentState);
     
         if (this.frameCount % 2 === 0) {

@@ -86,7 +86,24 @@ export class TerrainMaterialBuilder {
                console.log(`Chunk Mat: Face ${faceIndex} (${faceU},${faceV}) -> UV ${u.toFixed(3)},${v.toFixed(3)} Scale ${chunkSizeUV}`);
             }
         }
-
+        if (faceIndex !== -1) {
+            const chunksPerFace = faceSize || 16;
+            const u = faceU / chunksPerFace;
+            const v = faceV / chunksPerFace;
+            
+            chunkLocation.set(u, v);
+            chunkSizeUV = 1.0 / chunksPerFace;
+            
+            // DEBUG: Log every chunk to verify values
+            console.log(`[TerrainMaterialBuilder] Face ${faceIndex} chunk (${faceU},${faceV}):`, {
+                chunkLocation: { x: u, y: v },
+                chunkSizeUV: chunkSizeUV,
+                faceUVRange: {
+                    min: { x: u, y: v },
+                    max: { x: u + chunkSizeUV, y: v + chunkSizeUV }
+                }
+            });
+        }
         // Atlas Uniforms
         let finalAtlasUVOffset = new THREE.Vector2(0, 0);
         let finalAtlasUVScale = 1.0;
