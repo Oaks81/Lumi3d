@@ -202,7 +202,7 @@ export class GameEngine {
         this.inputManager = new GameInputManager(this.canvas);
         this.gameTime = new GameTime();
     
-        const useWebGPU = false;
+        const useWebGPU = true;
         const backendType = useWebGPU ? 'webgpu' : 'webgl2';
     
         this.renderer = new Frontend(this.canvas, {
@@ -261,9 +261,9 @@ console.log('=== TextureAtlasKey tests complete ===\n');
    
         await this.renderer.initializeChunkLoader();
 
-        const useWebGPUWorldGen = false;
+
     
-        if (useWebGPUWorldGen && 'gpu' in navigator) {
+        if (useWebGPU && 'gpu' in navigator) {
             console.log("Running WebGPU mode for world generation");
             const { WebGPUWorldGenerator } = await import('./world/webgpuWorldGenerator.js');
             this.worldGenerator = new WebGPUWorldGenerator(
