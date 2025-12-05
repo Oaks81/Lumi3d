@@ -1,4 +1,3 @@
-// WaterMaterialFactory.js
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.178.0/build/three.module.js';
 import { buildWaterVertexShader, buildWaterFragmentShader } from './waterShaderBuilder.js';
 
@@ -78,20 +77,17 @@ export class WaterMaterialFactory {
     createWaterMaterial(feature, heightTexture, environmentState) {
         const foamTexture = this.getFoamTexture();
         
-        // Validate height texture
         if (!heightTexture) {
-            console.error(`❌ No height texture for water chunk ${feature.chunkX},${feature.chunkY}`);
+            console.error(`No height texture for water chunk ${feature.chunkX},${feature.chunkY}`);
             heightTexture = this.createDefaultTexture();
         }
         
         const waterLevel = feature.waterLevel ?? feature.waterHeight ?? 8.0;
         const heightScale = feature.heightScale ?? 1.0;
         
-        // ✅ Get current time from environment state (if available)
         const currentTime = environmentState?.time ? environmentState.time * 0.001 : 0.0;
         
         const materialUniforms = {
-            // ✅ Initialize with CURRENT time, not 0
             time: { value: currentTime },
             waveHeight: { value: 0.35 },
             waveFrequency: { value: 0.8 },

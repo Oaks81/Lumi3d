@@ -9,22 +9,29 @@ export class TerrainMaterialBuilder {
             return this._shaderBuilders.get(apiName);
         }
 
+        console.log(`[TerrainMaterialBuilder] Loading shader builders for API: ${apiName}`);
+
         let builders;
         if (apiName === 'webgpu') {
             try {
-                // Ensure these paths match your project structure
                 const vertex = await import('./shaders/webgpu/terrainChunkVertexShaderBuilder.js');
                 const fragment = await import('./shaders/webgpu/terrainChunkFragmentShaderBuilder.js');
+                
+                if (!vertex.buildTerrainChunkVertexShader || !fragment.buildTerrainChunkFragmentShader) {
+                    throw new Error('WebGPU shader builders missing export functions');
+                }
+                
                 builders = {
                     buildTerrainChunkVertexShader: vertex.buildTerrainChunkVertexShader,
                     buildTerrainChunkFragmentShader: fragment.buildTerrainChunkFragmentShader
                 };
+                
+                console.log(' WebGPU shaders loaded successfully');
             } catch (e) {
-                console.error("Failed to load WebGPU shaders", e);
-                throw e;
+                console.error(" Failed to load WebGPU shaders:", e);
+                throw new Error(`Cannot load WebGPU shaders: ${e.message}`);
             }
         } else {
-            // WebGL2 fallbacks
             const vertex = await import('./shaders/webgl2/terrainChunkVertexShaderBuilder.js');
             const fragment = await import('./shaders/webgl2/terrainChunkFragmentShaderBuilder.js');
             builders = {
@@ -37,145 +44,235 @@ export class TerrainMaterialBuilder {
         return builders;
     }
 
-    static async create(options) {
-        const {
-            backend,
-            atlasTextures,
-            lookupTables,
-            cachedTextures,
-            chunkOffsetX = 0,
-            chunkOffsetZ = 0,
-            chunkSize = 128,
-            environmentState = {},
-            uniformManager = null,
-            // SPHERICAL PARAMS
-            faceIndex = -1,
-            faceU = 0, // This is likely integer ChunkX
-            faceV = 0, // This is likely integer ChunkY
-            faceSize = 16, // chunksPerFace (default 16)
-            planetConfig = { radius: 50000, origin: new THREE.Vector3(0,0,0) },
-            useAtlasMode = false,
-            uvTransform = null
-        } = options;
 
-        let apiName = 'webgl2';
-        if (backend && typeof backend.getAPIName === 'function') {
-            apiName = backend.getAPIName();
-        }
-
-        const builders = await this._loadShaderBuilders(apiName);
-        const vertexShader = builders.buildTerrainChunkVertexShader();
-        const fragmentShader = builders.buildTerrainChunkFragmentShader({ maxLightIndices: 8192 });
-
-        // === CALC SPHERICAL PROJECTION UNIFORMS ===
-        let chunkLocation = new THREE.Vector2(0, 0);
-        let chunkSizeUV = 1.0;
-
-        if (faceIndex !== -1) {
-            // Convert Integer Chunk Coordinates (e.g., 7, 8) to Face UVs (e.g., 0.4375, 0.5)
-            // faceSize should be the number of chunks across a face (e.g., 16)
-            const chunksPerFace = faceSize || 16; 
-            const u = faceU / chunksPerFace; 
-            const v = faceV / chunksPerFace;
-            
-            chunkLocation.set(u, v);
-            chunkSizeUV = 1.0 / chunksPerFace;
-            
-            // Debug check (remove later)
-            if (Math.random() < 0.001) {
-               console.log(`Chunk Mat: Face ${faceIndex} (${faceU},${faceV}) -> UV ${u.toFixed(3)},${v.toFixed(3)} Scale ${chunkSizeUV}`);
+        static async create(options) {
+            const {
+                backend,
+                atlasTextures,
+                lookupTables,
+                cachedTextures,
+                chunkOffsetX = 0,
+                chunkOffsetZ = 0,
+                chunkSize = 128,
+                environmentState = {},
+                uniformManager = null,
+                faceIndex = -1,
+                faceU = 0,
+                faceV = 0,
+                faceSize = 16,
+                planetConfig = null,
+                useAtlasMode = false,
+                uvTransform = null,
+                heightScale = 1.0
+            } = options;
+        
+            if (!backend) {
+                console.error(" TerrainMaterialBuilder: Backend is NULL!");
+                return null;
             }
-        }
-        if (faceIndex !== -1) {
-            const chunksPerFace = faceSize || 16;
-            const u = faceU / chunksPerFace;
-            const v = faceV / chunksPerFace;
+        
+            let apiName = 'webgl2';
+            if (backend && typeof backend.getAPIName === 'function') {
+                apiName = backend.getAPIName();
+            } else if (backend && backend.device) {
+                apiName = 'webgpu';
+            }
+        
+            console.log(`[TerrainMaterialBuilder] Creating terrain material for ${apiName}`);
+            console.log(`[TerrainMaterialBuilder] Cached textures:`, {
+                height: cachedTextures.height ? `${cachedTextures.height.width}x${cachedTextures.height.height}` : 'NULL',
+                normal: cachedTextures.normal ? `${cachedTextures.normal.width}x${cachedTextures.normal.height}` : 'NULL',
+                tile: cachedTextures.tile ? `${cachedTextures.tile.width}x${cachedTextures.tile.height}` : 'NULL',
+                splatData: cachedTextures.splatData ? 'SET' : 'NULL',
+                macro: cachedTextures.macro ? 'SET' : 'NULL'
+            });
+        
+            const builders = await this._loadShaderBuilders(apiName);
+        
+            const shaderOptions = { maxLightIndices: 8192 };
+            const vertexShader = builders.buildTerrainChunkVertexShader();
+            const fragmentShader = builders.buildTerrainChunkFragmentShader(shaderOptions);
+        
+            const isSpherical = faceIndex >= 0 && faceIndex <= 5;
+            const chunkSizeUV = 1.0 / faceSize;
+            const chunkLocationU = faceU * chunkSizeUV;
+            const chunkLocationV = faceV * chunkSizeUV;
+        
+            const radius = planetConfig?.radius || 50000;
+            const origin = planetConfig?.origin || { x: 0, y: 0, z: 0 };
+        
+            // Build defines - these MUST be set for textures to work
+            const defines = {};
             
-            chunkLocation.set(u, v);
-            chunkSizeUV = 1.0 / chunksPerFace;
-            
-            // DEBUG: Log every chunk to verify values
+            if (cachedTextures.height) {
+                defines.USE_HEIGHT_TEXTURE = true;
+                console.log('[TerrainMaterialBuilder] USE_HEIGHT_TEXTURE enabled');
+            }
+            if (cachedTextures.normal) {
+                defines.USE_NORMAL_TEXTURE = true;
+                console.log('[TerrainMaterialBuilder] USE_NORMAL_TEXTURE enabled');
+            }
+            if (cachedTextures.tile) {
+                defines.USE_TILE_TEXTURE = true;
+                console.log('[TerrainMaterialBuilder] USE_TILE_TEXTURE enabled');
+            }
+        
+            console.log('[TerrainMaterialBuilder] Defines:', defines);
+        
+
+        if (isSpherical) {
             console.log(`[TerrainMaterialBuilder] Face ${faceIndex} chunk (${faceU},${faceV}):`, {
-                chunkLocation: { x: u, y: v },
+                chunkLocation: { u: chunkLocationU, v: chunkLocationV },
                 chunkSizeUV: chunkSizeUV,
                 faceUVRange: {
-                    min: { x: u, y: v },
-                    max: { x: u + chunkSizeUV, y: v + chunkSizeUV }
+                    minU: chunkLocationU,
+                    maxU: chunkLocationU + chunkSizeUV,
+                    minV: chunkLocationV,
+                    maxV: chunkLocationV + chunkSizeUV
                 }
             });
         }
-        // Atlas Uniforms
-        let finalAtlasUVOffset = new THREE.Vector2(0, 0);
-        let finalAtlasUVScale = 1.0;
-        let finalUseAtlasMode = useAtlasMode ? 1 : 0;
 
-        if (useAtlasMode && uvTransform) {
-            finalAtlasUVOffset.set(uvTransform.offsetX, uvTransform.offsetY);
-            finalAtlasUVScale = uvTransform.scale;
-        }
-
-        // Capture nominal atlas size from the micro atlas (falls back to 2048)
-        const nominalAtlasSize = (atlasTextures.micro && atlasTextures.micro.width) || 2048;
-
-        // Build Uniforms
+        // =============================================
+        // Build ALL uniforms
+        // =============================================
         const uniforms = {
-            // Use height map values directly (in meters)
-            heightScale: { value: 6.0 },
-            // === PLANET PROJECTION ===
-            planetRadius: { value: planetConfig.radius },
-            planetOrigin: { value: planetConfig.origin },
-            chunkFace: { value: faceIndex },
-            chunkLocation: { value: chunkLocation }, // <--- CRITICAL FOR VERTEX SHADER
-            chunkSizeUV: { value: chunkSizeUV },     // <--- CRITICAL FOR VERTEX SHADER
-            
-            // Standard
+            // === BASIC CHUNK ===
             chunkOffset: { value: new THREE.Vector2(chunkOffsetX, chunkOffsetZ) },
             chunkSize: { value: chunkSize },
             chunkWidth: { value: chunkSize },
             chunkHeight: { value: chunkSize },
-            atlasTextureSize: { value: nominalAtlasSize },
-            
-            // Textures
+            maxTileTypes: { value: 256 },
+
+            // === LOD SETTINGS ===
+            lodLevel: { value: 0 },
+            geometryLOD: { value: 0 },
+            splatLODBias: { value: 0.0 },
+            macroLODBias: { value: 0.0 },
+            detailFade: { value: 1.0 },
+            enableSplatLayer: { value: 1.0 },
+            enableMacroLayer: { value: 1.0 },
+            enableClusteredLights: { value: 1.0 },
+
+            // === CHUNK TEXTURES ===
             heightTexture: { value: cachedTextures.height },
             normalTexture: { value: cachedTextures.normal },
             tileTexture: { value: cachedTextures.tile },
             splatDataMap: { value: cachedTextures.splatData },
-            
-            // Lookups & Globals
+            macroMaskTexture: { value: cachedTextures.macro },
+
+            // === LOOKUP TABLES ===
             tileTypeLookup: { value: lookupTables.tileTypeLookup },
+            macroTileTypeLookup: { value: lookupTables.macroTileTypeLookup },
+            numVariantsTex: { value: lookupTables.numVariantsTex },
+
+            // === ATLAS TEXTURES ===
             atlasTexture: { value: atlasTextures.micro },
+            atlasTextureSize: {
+                value: new THREE.Vector2(
+                    atlasTextures.micro?.image?.width || atlasTextures.micro?.width || 1024,
+                    atlasTextures.micro?.image?.height || atlasTextures.micro?.height || 1024
+                )
+            },
             level2AtlasTexture: { value: atlasTextures.macro1024 },
+            level2AtlasTextureSize: {
+                value: new THREE.Vector2(
+                    atlasTextures.macro1024?.image?.width || atlasTextures.macro1024?.width || 1024,
+                    atlasTextures.macro1024?.image?.height || atlasTextures.macro1024?.height || 1024
+                )
+            },
+
+            // === MATERIAL SETTINGS ===
+            macroScale: { value: 0.1 },
+            level2Blend: { value: 0.7 },
+            tileScale: { value: 1.0 },
+            isFeature: { value: 0.0 },
+
+            // === SEASON ===
+            numSeasons: { value: 4 },
+            currentSeason: { value: 0 },
+            nextSeason: { value: 1 },
+            seasonTransition: { value: 0.0 },
             
-            // Atlas System
-            atlasUVOffset: { value: finalAtlasUVOffset },
-            atlasUVScale: { value: finalAtlasUVScale },
-            useAtlasMode: { value: finalUseAtlasMode },
+            // =============================================
+            // SPHERICAL PROJECTION UNIFORMS (NEW!)
+            // =============================================
+            planetRadius: { value: radius },
+            planetOrigin: { value: new THREE.Vector3(origin.x, origin.y, origin.z) },
+            chunkFace: { value: isSpherical ? faceIndex : -1 },
+            chunkLocation: { value: new THREE.Vector2(chunkLocationU, chunkLocationV) },
+            chunkSizeUV: { value: chunkSizeUV },
+            
+            // Height displacement scale
+            heightScale: { value: heightScale },
+            
+            // =============================================
+            // ATLAS UV TRANSFORM (NEW!)
+            // =============================================
+            useAtlasMode: { value: useAtlasMode ? 1 : 0 },
+            atlasUVOffset: { value: new THREE.Vector2(
+                uvTransform?.offsetX || 0,
+                uvTransform?.offsetY || 0
+            )},
+            atlasUVScale: { value: uvTransform?.scale || 1.0 },
         };
 
-        // Clone Global Uniforms
+        // =============================================
+        // Clone global uniforms from UniformManager
+        // =============================================
         if (uniformManager && uniformManager.uniforms) {
-            const keys = [
+            const globalUniforms = uniformManager.uniforms;
+            const globalUniformsToClone = [
                 'modelMatrix', 'viewMatrix', 'projectionMatrix',
-                'cameraPosition', 'sunLightDirection', 'sunLightColor', 'sunLightIntensity',
-                'ambientLightColor', 'fogColor', 'fogDensity'
+                'sunLightColor', 'sunLightIntensity', 'sunLightDirection',
+                'moonLightColor', 'moonLightIntensity', 'moonLightDirection',
+                'ambientLightColor', 'ambientLightIntensity',
+                'skyAmbientColor', 'groundAmbientColor',
+                'thunderLightIntensity', 'thunderLightColor', 'thunderLightPosition',
+                'playerLightColor', 'playerLightIntensity',
+                'playerLightPosition', 'playerLightDistance',
+                'fogColor', 'fogDensity',
+                'weatherIntensity', 'currentWeather',
+                'shadowMapCascade0', 'shadowMapCascade1', 'shadowMapCascade2',
+                'shadowMatrixCascade0', 'shadowMatrixCascade1', 'shadowMatrixCascade2',
+                'cascadeSplits', 'numCascades',
+                'shadowBias', 'shadowNormalBias', 'shadowMapSize', 'receiveShadow',
+                'cameraPosition', 'cameraNear', 'cameraFar',
+                'clusterDimensions', 'clusterDataTexture',
+                'lightDataTexture', 'lightIndicesTexture',
+                'numLights', 'maxLightsPerCluster'
             ];
-            for (const key of keys) {
-                if (uniformManager.uniforms[key]) {
-                    uniforms[key] = { value: this._cloneUniformValue(uniformManager.uniforms[key].value) };
+
+            for (const key of globalUniformsToClone) {
+                if (globalUniforms[key] && !uniforms[key]) {
+                    uniforms[key] = {
+                        value: this._cloneUniformValue(globalUniforms[key].value)
+                    };
                 }
             }
         }
 
-        // WebGPU Layout (Matches VertexInput struct in shader)
+        // =============================================
+        // Pre-define vertex layout for WebGPU
+        // =============================================
         let vertexLayout = null;
         if (apiName === 'webgpu') {
             vertexLayout = [
-                // Loc 0: Position (3x float32)
-                { arrayStride: 12, stepMode: 'vertex', attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x3' }] }, 
-                // Loc 1: Normal (3x float32)
-                { arrayStride: 12, stepMode: 'vertex', attributes: [{ shaderLocation: 1, offset: 0, format: 'float32x3' }] }, 
-                // Loc 2: UV (2x float32)
-                { arrayStride: 8,  stepMode: 'vertex', attributes: [{ shaderLocation: 2, offset: 0, format: 'float32x2' }] }  
+                { 
+                    arrayStride: 12, 
+                    stepMode: 'vertex', 
+                    attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x3' }] 
+                },
+                { 
+                    arrayStride: 12, 
+                    stepMode: 'vertex', 
+                    attributes: [{ shaderLocation: 1, offset: 0, format: 'float32x3' }] 
+                },
+                { 
+                    arrayStride: 8,  
+                    stepMode: 'vertex', 
+                    attributes: [{ shaderLocation: 2, offset: 0, format: 'float32x2' }] 
+                }
             ];
         }
 
@@ -184,23 +281,38 @@ export class TerrainMaterialBuilder {
             vertexShader: vertexShader,
             fragmentShader: fragmentShader,
             uniforms,
-            side: 'double', 
-       //     side: 'front', // Or 'double' if you are inside the sphere
+            defines,  // CRITICAL: Pass defines here
+            side: 'double',  // Changed from 'double' for proper backface culling
             depthTest: true,
             depthWrite: true,
+            isInstanced: false,
             vertexLayout: vertexLayout,
-            defines: {
-                USE_ATLAS_MODE:1// finalUseAtlasMode
-            }
         });
 
         material._apiName = apiName;
+
+        // Debug log
+        console.log('[TerrainMaterialBuilder] Material created:', {
+            height: `${cachedTextures.height?.width}x${cachedTextures.height?.height}`,
+            spherical: isSpherical,
+            face: faceIndex,
+            chunkLocation: `(${chunkLocationU.toFixed(3)}, ${chunkLocationV.toFixed(3)})`,
+            useAtlasMode: useAtlasMode
+        });
+
         return material;
     }
 
     static _cloneUniformValue(value) {
-        if (value && value.clone) return value.clone();
+        if (value === null || value === undefined) return value;
+        if (value.isVector2) return value.clone();
+        if (value.isVector3) return value.clone();
+        if (value.isVector4) return value.clone();
+        if (value.isColor) return value.clone();
+        if (value.isMatrix3) return value.clone();
+        if (value.isMatrix4) return value.clone();
         if (Array.isArray(value)) return [...value];
+        if (ArrayBuffer.isView(value)) return value.slice();
         return value;
     }
 }

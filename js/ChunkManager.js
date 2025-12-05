@@ -1,9 +1,3 @@
-// ============================================
-// COMPLETE REPLACEMENT FOR js/ChunkManager.js
-// This fixes all the chunk loading issues
-// ============================================
-
-// ChunkManager.js
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.178.0/build/three.module.js';
 import { PlanetaryChunkAddress } from './planet/planetaryChunkAddress.js';
 
@@ -127,14 +121,14 @@ export class ChunkManager {
         
         if (visibleSet.size === 0) {
             if (this._debugFrameCount === 1) {
-                console.warn('⚠️ No visible chunks in first update!');
+                console.warn('No visible chunks in first update!');
             }
             return;
         }
         
         // Debug first update
         if (this._debugFrameCount === 1 && chunkKeys.length > 0) {
-            console.log('🗺️ First chunk keys:', chunkKeys.slice(0, 5));
+            console.log('First chunk keys:', chunkKeys.slice(0, 5));
         }
         
         // Unload chunks not in visible set
@@ -144,7 +138,6 @@ export class ChunkManager {
             }
         }
         
-        // Load new chunks - CRITICAL: Pass full key string to preserve face info!
         for (const key of chunkKeys) {
             if (!this.loadedChunks.has(key) && !this.pendingChunks.has(key)) {
    
@@ -249,7 +242,7 @@ export class ChunkManager {
             chunkY = parseInt(parts[1]);
             
             if (this.loadedChunks.size < 5) {
-                console.log(`🔧 Parsing flat key "${chunkKey}" -> x=${chunkX}, y=${chunkY}`);
+                console.log(`Parsing flat key "${chunkKey}" -> x=${chunkX}, y=${chunkY}`);
             }
         }
     

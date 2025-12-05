@@ -1,9 +1,5 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.178.0/build/three.module.js';
-import { TreeGeometryGenerator } from './treeGenerator.js';
-import { GrassGeometryGenerator } from './grassGenerator.js';
-import { ShrubGeometryGenerator } from './shrubGenerator.js';
 
-// In constructor, add:
 function meshKey(type, shapeSeed, additionalShapeParams = {}) {
     const parts = [type, shapeSeed];
     if (additionalShapeParams.complexity !== undefined) parts.push(`c${additionalShapeParams.complexity}`);
@@ -16,16 +12,11 @@ export class FeatureMeshManager {
         this.materialFactory = materialFactory;
         this.cacheSize = cacheSize;
         this.generatorMap = new Map();
-        this.geometryCache = new Map();        // [key|lodN] => { geometry, ... }
+        this.geometryCache = new Map();
         this.pendingOperations = new Map();
-        this.singletonTracker = new Map();     // globalId => Mesh
+        this.singletonTracker = new Map();
         this.progressCallbacks = new Set();
         this.usageStats = new Map();
-
-   /*     this.registerGenerator('tree', new TreeGeometryGenerator());
-        this.registerGenerator('grass', new GrassGeometryGenerator());
-        this.registerGenerator('shrub', new ShrubGeometryGenerator());
-*/
     }
 
     registerGenerator(type, generator) {
@@ -42,13 +33,11 @@ export class FeatureMeshManager {
         const params = this._extractShapeParams(feature);
         const baseKey = meshKey(meshType, shapeSeed, params);
     
-        let actualLodMap;  // This will be the GeometryLodMap object
+        let actualLodMap;
         
         if (this.geometryCache.has(baseKey) && this.geometryCache.get(baseKey).lodMap) {
-            // Cache hit - get the stored GeometryLodMap
             actualLodMap = this.geometryCache.get(baseKey).lodMap;
         } else {
-            // Cache miss - generate new
             const generator = this.generatorMap.get(meshType);
             if (!generator) {
                 console.error(`No generator registered for type '${meshType}'`);
@@ -63,17 +52,14 @@ export class FeatureMeshManager {
                 throw new Error(`Feature generator for ${meshType} did not return a GeometryLodMap!`);
             }
             
-            // Extract the actual GeometryLodMap from the result
             actualLodMap = result.lodMap;
             
-            // Cache it
             this.geometryCache.set(baseKey, { lodMap: actualLodMap });
             
             console.log(`Generated and cached geometry for ${meshType}, LODs available:`, 
                         Array.from(actualLodMap.lodMap.keys()));
         }
         
-        // Now get the specific LOD info
         const info = actualLodMap.getLodInfo ? actualLodMap.getLodInfo(lod) : undefined;
         
         if (!info) {
@@ -91,11 +77,10 @@ export class FeatureMeshManager {
         }
         
         const firstFeature = featureGroup[0];
-        console.log(`🔧 Creating instanced mesh for ${featureGroup.length} x ${firstFeature.type}/${firstFeature.subtype} at LOD ${lod}`);
-        console.log(`🔧 First feature position:`, firstFeature.position);
+        console.log(`Creating instanced mesh for ${featureGroup.length} x ${firstFeature.type}/${firstFeature.subtype} at LOD ${lod}`);
+        console.log('First feature position:', firstFeature.position);
         
         try {
-            // Get LOD info using existing cache system
             const { info, meshType, shapeSeed, params, lodMap } = await this._getLodInfo(firstFeature, lod);
             
             if (!info) {
@@ -113,7 +98,6 @@ export class FeatureMeshManager {
                 return null;
             }
             
-            // Get material
             const material = this.materialFactory.getMaterialForFeature(
                 firstFeature, 
                 heightTexture, 
@@ -136,7 +120,6 @@ export class FeatureMeshManager {
                 
                 const instancedMesh = new THREE.InstancedMesh(geometry, material, featureGroup.length);
                 
-                // Set transforms for each instance
                 const matrix = new THREE.Matrix4();
                 const position = new THREE.Vector3();
                 const quaternion = new THREE.Quaternion();
@@ -145,21 +128,18 @@ export class FeatureMeshManager {
                 for (let i = 0; i < featureGroup.length; i++) {
                     const feature = featureGroup[i];
                     
-                    // Get position (handle both formats)
                     position.set(
                         feature.position?.x ?? feature.x ?? 0,
                         feature.position?.y ?? feature.y ?? 0,
                         feature.position?.z ?? feature.z ?? 0
                     );
                     
-                    // Get rotation (handle both formats)
                     quaternion.setFromEuler(new THREE.Euler(
                         feature.rotation?.x ?? 0,
                         feature.rotation?.y ?? feature.rotation ?? 0,
                         feature.rotation?.z ?? 0
                     ));
                     
-                    // Get scale (handle both formats)
                     const scaleValue = feature.scale?.x ?? feature.scale ?? 1;
                     scale.set(scaleValue, scaleValue, scaleValue);
                     
@@ -171,17 +151,15 @@ export class FeatureMeshManager {
                 instancedMesh.frustumCulled = true;
                 instancedMesh.userData.featureGroup = featureGroup;
                 
-                console.log(`✅ Successfully created instanced mesh with ${featureGroup.length} instances`);
-                console.log(`✅ Geometry vertices: ${geometry.attributes.position.count}, triangles: ${geometry.index.count / 3}`);
-                console.log(`✅ Material:`, instancedMesh.material.type);
+                console.log(`Successfully created instanced mesh with ${featureGroup.length} instances`);
+                console.log(`Geometry vertices: ${geometry.attributes.position.count}, triangles: ${geometry.index.count / 3}`);
+                console.log('Material:', instancedMesh.material.type);
 
                 console.log(`LOD ${lod} geometry vertices:`, info.geometry?.attributes?.position?.count ?? 0);
                 return instancedMesh;
                 
             } else if (info.type === 'sprite') {
-                // Handle sprite/billboard
                 console.log(`Creating sprite batch for ${meshType} at LOD ${lod}`);
-                // Sprite handling would go here
                 return null;
             }
             

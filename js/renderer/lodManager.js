@@ -1,15 +1,3 @@
-// =============================================================================
-// LOD MANAGER FIX - js/renderer/lodManager.js
-// =============================================================================
-// 
-// TWO CRITICAL ISSUES:
-// 1. getLODForDistance returns indices 0-10, but only 0-6 are valid
-// 2. LOD distances are too small for spherical terrain at altitude
-//
-// =============================================================================
-
-// Replace the entire LODManager class with this fixed version:
-
 export class LODManager {
     constructor(config = {}) {
         this.chunkSize = config.chunkSize || 128;
@@ -17,7 +5,6 @@ export class LODManager {
         this.planetConfig = config.planetConfig || null;
         this.sphericalMapper = config.sphericalMapper || null;
         
-        // FIXED: Use appropriate distances based on mode
         this.lodDistances = config.lodDistances || this.getDefaultDistances();
         this.lodSettings = this.initializeLODSettings();
         this.altitudeLODOverrides = this.initializeAltitudeOverrides();
@@ -194,13 +181,9 @@ export class LODManager {
         return this.getLODForChunk(chunkX, chunkY, cameraPosition, altitudeZoneManager, { face });
     }
     
-    /**
-     * FIXED: Get LOD level for a distance, clamped to valid range
-     */
     getLODForDistance(distance) {
         for (let i = 0; i < this.lodDistances.length; i++) {
             if (distance <= this.lodDistances[i]) {
-                // CRITICAL FIX: Clamp to valid LOD range
                 return Math.min(i, this.MAX_LOD);
             }
         }

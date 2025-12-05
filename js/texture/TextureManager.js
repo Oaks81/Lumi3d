@@ -170,7 +170,7 @@ export class TextureAtlasManager {
             return;
         }
         
-        console.log('📤 Uploading lookup tables via backend...');
+        console.log('Uploading lookup tables via backend...');
         
         // Use backend's createTexture instead of direct GPU calls
         if (this.lookupTables.tileTypeLookup && !this.lookupTables.tileTypeLookup._gpuTexture) {
@@ -466,30 +466,29 @@ export class TextureAtlasManager {
         this.loaded = true;
         console.log('All texture atlases and lookups initialized');
     }
-
     async createProceduralAtlas(level, useCpu = false) {
         const config = ATLAS_CONFIG[level];
         const atlas = this.atlases.get(level);
-
+    
         const hasTransparent = (level === TEXTURE_LEVELS.MICRO);
-
+    
         const variants = await this._getAllProceduralVariants(level);
-
+    
         if (!variants || variants.length === 0) {
             console.error(`No procedural variants found for level ${level}`);
             return null;
         }
-
+    
         const hashToUniqueIndex = new Map();
         const uniqueVariants = [];
         const variantIndexToUniqueIndex = new Map();
-
+    
         let startIndex = hasTransparent ? 1 : 0;
-
+    
         for (let i = 0; i < variants.length; i++) {
             const variant = variants[i];
             const hash = getLayerConfigHash(variant.layers);
-
+    
             let uniqueIdx = hashToUniqueIndex.get(hash);
             if (uniqueIdx === undefined) {
                 uniqueIdx = uniqueVariants.length + startIndex;
@@ -502,29 +501,29 @@ export class TextureAtlasManager {
                     firstVariant: variant.variant
                 });
             }
-
+    
             variantIndexToUniqueIndex.set(i, uniqueIdx);
         }
-
+    
         console.log(`Deduplicated: ${variants.length} variants -> ${uniqueVariants.length} unique textures`);
-
+    
         const totalTextures = hasTransparent ? uniqueVariants.length + 1 : uniqueVariants.length;
         atlas.layout = this.calculateLayout(
             totalTextures,
             config.atlasSize,
             config.textureSize
         );
-
+    
         atlas.layout.padding = this.PADDING;
-
+    
         atlas.canvas = document.createElement('canvas');
         atlas.canvas.width = atlas.layout.atlasSize;
         atlas.canvas.height = atlas.layout.atlasSize;
         atlas.context = atlas.canvas.getContext('2d', { willReadFrequently: true });
-
+    
         atlas.context.fillStyle = '#808080';
         atlas.context.fillRect(0, 0, atlas.canvas.width, atlas.canvas.height);
-
+    
         if (hasTransparent) {
             const transparentCanvas = document.createElement('canvas');
             transparentCanvas.width = atlas.layout.textureSize;
@@ -532,52 +531,59 @@ export class TextureAtlasManager {
             const transparentCtx = transparentCanvas.getContext('2d');
             transparentCtx.fillStyle = 'rgba(128, 128, 128, 1)';
             transparentCtx.fillRect(0, 0, atlas.layout.textureSize, atlas.layout.textureSize);
-
+    
             this.addTextureToAtlas(level, transparentCanvas, 0, 'transparent');
         }
-
+    
         for (let i = 0; i < uniqueVariants.length; i++) {
             const variant = uniqueVariants[i];
             const atlasIndex = i + startIndex;
-
+    
             if (!atlas.textureMap.has(variant.firstTileType)) {
                 atlas.textureMap.set(variant.firstTileType, atlasIndex);
             }
         }
-
+    
         console.log(`Creating procedural atlas for ${level} with ${variants.length} variants (${this.apiName})`);
-
+    
         const textureImages = [];
+        const generators = []; // Keep track of generators to dispose later
+        
         for (let i = 0; i < uniqueVariants.length; i++) {
             try {
                 const gen = await this._createTextureGenerator(
                     atlas.layout.textureSize,
                     atlas.layout.textureSize
                 );
-
+    
                 const layers = uniqueVariants[i].layers;
                 if (!Array.isArray(layers)) {
                     console.error(`Invalid layers for variant ${i}:`, layers);
                     continue;
                 }
-
+    
                 layers.forEach(layerConfig => {
                     gen.addLayer(layerConfig);
                 });
-
+    
                 let textureCanvas;
                 if (this.apiName === 'webgpu') {
                     textureCanvas = await gen.generate();
                 } else {
                     textureCanvas = gen.generate();
                 }
+    
+                // CRITICAL FIX: Copy the canvas content to a new canvas before storing
+                // This prevents dispose() from destroying the texture data
+                const copyCanvas = document.createElement('canvas');
+                copyCanvas.width = textureCanvas.width;
+                copyCanvas.height = textureCanvas.height;
+                const copyCtx = copyCanvas.getContext('2d');
+                copyCtx.drawImage(textureCanvas, 0, 0);
                 
-                textureImages[i] = textureCanvas;
-
-                if (gen.dispose) {
-                    gen.dispose();
-                }
-
+                textureImages[i] = copyCanvas;
+                generators.push(gen); // Store for later disposal
+    
             } catch (error) {
                 console.error(`Failed to generate texture ${i}:`, error);
                 const fallbackCanvas = document.createElement('canvas');
@@ -589,45 +595,63 @@ export class TextureAtlasManager {
                 textureImages[i] = fallbackCanvas;
             }
         }
-
+    
+        // Now add all textures to the atlas
         for (let i = 0; i < uniqueVariants.length; i++) {
             if (!textureImages[i]) {
                 console.error(`Missing texture image for index ${i}`);
                 continue;
             }
+            
+            // Validate dimensions before adding
+            if (textureImages[i].width === 0 || textureImages[i].height === 0) {
+                console.error(`Invalid texture dimensions for index ${i}: ${textureImages[i].width}x${textureImages[i].height}`);
+                const fallbackCanvas = document.createElement('canvas');
+                fallbackCanvas.width = atlas.layout.textureSize;
+                fallbackCanvas.height = atlas.layout.textureSize;
+                const fallbackCtx = fallbackCanvas.getContext('2d');
+                fallbackCtx.fillStyle = `hsl(${(i * 137.5) % 360}, 70%, 50%)`;
+                fallbackCtx.fillRect(0, 0, atlas.layout.textureSize, atlas.layout.textureSize);
+                textureImages[i] = fallbackCanvas;
+            }
+            
             const atlasIndex = hasTransparent ? i + 1 : i;
             this.addTextureToAtlas(level, textureImages[i], atlasIndex, `procedural_${atlasIndex}`);
         }
-
+    
+        // NOW dispose all generators after textures are added to atlas
+        for (const gen of generators) {
+            if (gen.dispose) {
+                gen.dispose();
+            }
+        }
+    
         for (let i = 0; i < variants.length; i++) {
             const { tileType, season, variant } = variants[i];
             const key = `${tileType}:${season}:${variant}`;
             const atlasIndex = variantIndexToUniqueIndex.get(i);
             atlas.seasonalTextureMap.set(key, atlasIndex);
         }
-
+    
         atlas.texture = this._canvasToTexture(atlas.canvas, {
             minFilter: TextureFilter.LINEAR_MIPMAP_LINEAR,
             magFilter: TextureFilter.LINEAR,
             generateMipmaps: true,
             anisotropy: 8,
         });
-        
-        // CRITICAL: Use backend to upload
+    
         if (this._backend) {
-            console.log(`📤 Uploading ${level} atlas via backend (${atlas.canvas.width}x${atlas.canvas.height})`);
+            console.log(`Uploading ${level} atlas via backend (${atlas.canvas.width}x${atlas.canvas.height})`);
             this._backend.createTexture(atlas.texture);
             console.log(` ${level} atlas uploaded`);
         } else {
             console.error(` No backend available for ${level} atlas upload!`);
         }
-        
     
         console.log(`Created procedural atlas for ${level}: ${uniqueVariants.length} unique textures`);
-
+    
         return atlas.texture;
     }
-
     async createAtlas(level) {
         const config = ATLAS_CONFIG[level];
         const atlas = this.atlases.get(level);

@@ -1,9 +1,7 @@
-// buildStreamedChunkFragmentShader.js
 export function buildStreamedChunkFragmentShader() {
     return `
         precision highp float;
         
-        // ✅ Inputs from vertex shader (must match!)
         varying vec3 v_worldPos;
         varying vec2 vUv;
         varying float v_alpha;
@@ -15,7 +13,6 @@ export function buildStreamedChunkFragmentShader() {
         uniform float u_waterLevel;
         
         void main() {
-            // ✅ Early discard if fully transparent
             if (v_alpha < 0.01) discard;
             
             // Calculate normal from derivatives
@@ -34,7 +31,6 @@ export function buildStreamedChunkFragmentShader() {
             vec3 fogColor = vec3(0.7, 0.8, 0.9);
             color = mix(color, fogColor, fogFactor);
             
-            // ✅ Apply alpha from vertex shader
             gl_FragColor = vec4(color, v_alpha);
         }
     `;

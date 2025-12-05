@@ -203,14 +203,12 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
             if (camPos.isVector3) {
                 this.camera.position.copy(camPos);
             } else {
-                // FIX: Do NOT swap Z and Y. Trust the engine's Y-up coordinates.
                 this.camera.position.set(camPos.x, camPos.y, camPos.z); 
             }
     
             if (camTarget.isVector3) {
                 this.camera.target.copy(camTarget);
             } else {
-                // FIX: Do NOT swap Z and Y.
                 this.camera.target.set(camTarget.x, camTarget.y, camTarget.z);
             }
     
@@ -342,10 +340,11 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
             planetConfig,
             sphericalMapper,
         );
-    
+
         this.uniformManager.updateFromEnvironmentState(environmentState);
-    
-        if (this.masterChunkLoader.terrainMeshManager) {
+
+        // Optionally push env uniforms to meshes if supported
+        if (this.masterChunkLoader.terrainMeshManager?.updateEnvUniforms) {
             this.masterChunkLoader.terrainMeshManager.updateEnvUniforms(
                 environmentState,
                 this.camera,
@@ -382,7 +381,7 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
                 this.backendType = 'webgl2';
             }
             if (this.backend && this.backend._pipelineCache) {
-                console.log('🧹 Clearing pipeline cache');
+                console.log('Clearing pipeline cache');
                 this.backend._pipelineCache.clear();
             }
         }
@@ -439,7 +438,7 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
             await this.orbitalSphereRenderer.initialize();
             console.log('OrbitalSphereRenderer initialized');
         } else {
-            console.log('⏭Skipping OrbitalSphereRenderer (flat terrain mode)');
+            console.log('Skipping OrbitalSphereRenderer (flat terrain mode)');
             this.orbitalSphereRenderer = null;
         }
         
@@ -464,10 +463,13 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
     async render(gameState, environmentState, deltaTime, planetConfig, sphericalMapper) {
         if (!this.textureManager?.loaded || !gameState.terrain) return;
     
-        this.backend.device.pushErrorScope('validation');
+        // Only use error scopes for WebGPU
+        if (this.backendType === 'webgpu' && this.backend.device) {
+            this.backend.device.pushErrorScope('validation');
+        }
     
         this.frameCount++;
-  
+    
         this.updateCamera(gameState);
         await this.updateChunks(gameState, environmentState, deltaTime, planetConfig, sphericalMapper);
         this.updateLighting(environmentState);
@@ -480,7 +482,7 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
         this.backend.setClearColor(0.0, 0.0, 0.0, 1.0);
         this.backend.clear(true, true, false);
     
-
+    
         if (this.orbitalSphereRenderer && gameState.altitudeZoneManager) {
             this.orbitalSphereRenderer.update(
                 this.camera,
@@ -492,13 +494,15 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
     
         this.renderTerrain();
         this.renderGenericMeshes();
+        
         if (this.backendType === 'webgpu') {
             this.backend.submitCommands();
-        }
-    
-        const error = await this.backend.device.popErrorScope();
-        if (error) {
-            console.error('WebGPU validation error:', error.message);
+            
+            // Check for validation errors
+            const error = await this.backend.device.popErrorScope();
+            if (error) {
+                console.error('WebGPU validation error:', error.message);
+            }
         }
     }
 
@@ -576,6 +580,9 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
             }
             if (!meshEntry.material.uniforms.modelMatrix) {
                 meshEntry.material.uniforms.modelMatrix = { value: new THREE.Matrix4() };
+            }
+            if (meshEntry.material.uniforms.cameraPosition) {
+                meshEntry.material.uniforms.cameraPosition.value.copy(this.camera.position);
             }
     
             meshEntry.material.uniforms.viewMatrix.value.copy(viewMatrix);

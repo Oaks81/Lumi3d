@@ -293,7 +293,7 @@ export class PerformanceProfiler {
         
         console.group(`Performance Summary (last ${this.history.length} frames)`);
         console.log(` Average FPS: ${avg.fps.toFixed(1)}`);
-        console.log(`⏱ Average Frame Time: ${avg.frameTime.toFixed(2)}ms`);
+        console.log(`Average Frame Time: ${avg.frameTime.toFixed(2)}ms`);
         console.log(` Memory: ${avg.memory.used.toFixed(1)}MB / ${avg.memory.total.toFixed(1)}MB`);
         
         console.group(' Timing Breakdown:');
@@ -314,7 +314,7 @@ export class PerformanceProfiler {
         
         // Log GPU timings if available
         if (Object.keys(this.frameData.gpuTimings).length > 0) {
-            console.group('🎨 GPU Timings:');
+            console.group('GPU Timings:');
             for (const [name, times] of Object.entries(this.frameData.gpuTimings)) {
                 const avg = times.reduce((a, b) => a + b, 0) / times.length;
                 console.log(`  ${name}: ${avg.toFixed(2)}ms`);
@@ -324,7 +324,7 @@ export class PerformanceProfiler {
         
         // Log counts
         if (Object.keys(this.frameData.counts).length > 0) {
-            console.group('📊 Counts:');
+            console.group('Counts:');
             for (const [name, count] of Object.entries(this.frameData.counts)) {
                 console.log(`  ${name}: ${count}`);
             }

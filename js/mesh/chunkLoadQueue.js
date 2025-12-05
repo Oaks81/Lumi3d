@@ -3,18 +3,16 @@ export class ChunkLoadQueue {
         this.loadQueue = [];
         this.unloadQueue = [];
         this.maxOperationsPerFrame = maxOperationsPerFrame;
-        this.pendingLoads = new Set(); // Track what's already queued
+        this.pendingLoads = new Set();
         this.pendingUnloads = new Set();
     }
     queueLoad(chunkKey, priority = 0) {
-        //console.log(`📥 Queue load: ${chunkKey} (already pending: ${this.pendingLoads.has(chunkKey)})`);
-        
         if (this.pendingLoads.has(chunkKey)) {
             return;
         }
     
         if (this.pendingUnloads.has(chunkKey)) {
-            console.warn(`🔄 ${chunkKey} was in unload queue, removing from unload`);
+            console.warn(`${chunkKey} was in unload queue, removing from unload`);
             this.unloadQueue = this.unloadQueue.filter(key => key !== chunkKey);
             this.pendingUnloads.delete(chunkKey);
         }
@@ -24,15 +22,12 @@ export class ChunkLoadQueue {
     }
     
     queueUnload(chunkKey) {
-    //    console.log(`📤 Queue unload: ${chunkKey} (already pending: ${this.pendingUnloads.has(chunkKey)})`);
-        
         if (this.pendingUnloads.has(chunkKey)) {
-            //console.warn(`⚠️ ${chunkKey} already in unload queue`);
             return;
         }
     
         if (this.pendingLoads.has(chunkKey)) {
-            console.warn(`🔄 ${chunkKey} was in load queue, removing from load`);
+            console.warn(`${chunkKey} was in load queue, removing from load`);
             this.loadQueue = this.loadQueue.filter(item => item.chunkKey !== chunkKey);
             this.pendingLoads.delete(chunkKey);
         }
@@ -51,13 +46,12 @@ export class ChunkLoadQueue {
         while (loads.length < count && i < this.loadQueue.length) {
             const item = this.loadQueue[i];
             
-            // CRITICAL: Skip if chunk is still pending unload
             if (!this.pendingUnloads.has(item.chunkKey)) {
                 loads.push(item.chunkKey);
                 this.pendingLoads.delete(item.chunkKey);
                 this.loadQueue.splice(i, 1);
             } else {
-                console.warn(`⚠️ Skipping load of ${item.chunkKey} - still pending unload`);
+                console.warn(`Skipping load of ${item.chunkKey} - still pending unload`);
                 i++;
             }
         }

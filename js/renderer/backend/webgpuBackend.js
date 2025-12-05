@@ -274,12 +274,12 @@ export class WebGPUBackend extends Backend {
         const vertexInputMatch = vs.match(/struct\s+VertexInput\s*\{([^}]*)\}/s);
 
         if (!vertexInputMatch) {
-            console.warn('⚠️ Could not find VertexInput struct, using default layout');
+            console.warn('Warning: Could not find VertexInput struct, using default layout');
             return this._getDefaultVertexLayout();
         }
 
         const inputBlock = vertexInputMatch[1];
-        const locationRegex = /@location$(\d+)$\s+(\w+)\s*:\s*([^,;\n]+)/g;
+        const locationRegex = /@location\((\d+)\)\s+(\w+)\s*:\s*([^,;\n]+)/g;
         const locations = [];
 
         let match;
@@ -291,7 +291,7 @@ export class WebGPUBackend extends Backend {
         }
 
         if (locations.length === 0) {
-            console.warn('⚠️ No @location attributes found in VertexInput, using default');
+            console.warn('Warning: No @location attributes found in VertexInput, using default');
             return this._getDefaultVertexLayout();
         }
 
@@ -371,30 +371,27 @@ export class WebGPUBackend extends Backend {
         return sizeMap[wgslType] || 12;
     }
 
-// js/renderer/backend/webgpuBackend.js
-
 compileShader(material) {
-    // ============================================
-    // FIX: Normalize material name for cache key
-    // ============================================
     const materialType = (material.name || 'unknown').toLowerCase().trim();
     
     // Extract base type (remove numbers, special chars)
     const baseType = materialType.replace(/[0-9_-]/g, '');
     
-    console.log(`🔨 Compiling shader for material: "${material.name}" (type: ${baseType})`);
+    console.log(`Compiling shader for material: "${material.name}" (type: ${baseType})`);
     
-    const layoutKey = material.vertexLayout ? 
+    const layoutVersion = materialType.includes('terrain') ? 'v16' : 'v1';
+    const layoutKeyRaw = material.vertexLayout ? 
         JSON.stringify(material.vertexLayout.map(l => ({ 
             stride: l.arrayStride, 
             step: l.stepMode, 
             attrs: l.attributes.length 
         }))) : 
-        'default';
+        `default_${layoutVersion}`;
+    const layoutKey = materialType.includes('terrain')
+        ? `${layoutKeyRaw}_v${layoutVersion}`
+        : layoutKeyRaw;
     
-    // ============================================
     // CRITICAL: Cache key must include shader hash to prevent collisions
-    // ============================================
     const shaderHash = this._hashCode(material.vertexShader.substring(0, 200) + 
                                      material.fragmentShader.substring(0, 200));
     
@@ -403,11 +400,11 @@ compileShader(material) {
     if (this._pipelineCache.has(cacheKey)) {
         material._gpuPipeline = this._pipelineCache.get(cacheKey);
         material._needsCompile = false;
-        console.log(`♻️ Using cached pipeline: ${cacheKey}`);
+        console.log(`Using cached pipeline: ${cacheKey}`);
         return material._gpuPipeline;
     }
 
-    console.log(`🔧 Creating NEW pipeline: ${cacheKey}`);
+    console.log(`Creating NEW pipeline: ${cacheKey}`);
 
     const vertexModule = this.device.createShaderModule({ 
         label: `Vertex-${materialType}`, 
@@ -418,12 +415,9 @@ compileShader(material) {
         code: material.fragmentShader 
     });
     
-    // ============================================
-    // FIX: Detect material type from shader content
-    // ============================================
     const bindGroupLayouts = this._createBindGroupLayouts(material);
     
-    console.log(`📐 Bind group layouts for ${materialType}:`, {
+    console.log(`Bind group layouts for ${materialType}:`, {
         count: bindGroupLayouts.length,
         description: this._describeLayouts(bindGroupLayouts)
     });
@@ -468,19 +462,17 @@ compileShader(material) {
         this._pipelineCache.set(cacheKey, material._gpuPipeline);
         material._needsCompile = false;
         
-        console.log(`✅ Pipeline created: ${cacheKey}`);
+        console.log(`Pipeline created: ${cacheKey}`);
         return material._gpuPipeline;
     } catch (error) {
-        console.error(`❌ Pipeline creation failed for ${materialType}:`, error);
+        console.error(`Pipeline creation failed for ${materialType}:`, error);
         console.error('Vertex shader preview:\n', material.vertexShader.substring(0, 400));
         console.error('Fragment shader preview:\n', material.fragmentShader.substring(0, 400));
         throw error;
     }
 }
 
-// ============================================
 // HELPER: Simple string hash for cache keys
-// ============================================
 _hashCode(str) {
     let hash = 0;
     for (let i = 0; i < str.length; i++) {
@@ -491,9 +483,7 @@ _hashCode(str) {
     return Math.abs(hash).toString(36);
 }
 
-// ============================================
 // HELPER: Describe layouts for debugging
-// ============================================
 _describeLayouts(layouts) {
     return layouts.map((layout, i) => {
         const entries = [];
@@ -540,7 +530,7 @@ _describeLayouts(layouts) {
         });
         layouts.push(group1);
         
-        console.log('  📋 Orbital layouts created:', {
+        console.log('  Orbital layouts created:', {
             group0: 'Uniforms (2 buffers)',
             group1: 'Texture@0 + Sampler@1'
         });
@@ -550,15 +540,15 @@ _describeLayouts(layouts) {
     _createBindGroupLayouts(material) {
         const materialName = (material.name || '').toLowerCase();
         
-        console.log(`🔧 Creating bind group layouts for: ${materialName}`);
+        console.log(`Creating bind group layouts for: ${materialName}`);
         
         if (materialName.includes('shadow') || materialName.includes('depth')) {
-            console.log('  → Shadow layout');
+            console.log('  -> Shadow layout');
             return this._createShadowLayouts();
         }
         
         if (materialName.includes('orbital') || materialName.includes('sphere')) {
-            console.log('  → Orbital sphere layout');
+            console.log('  -> Orbital sphere layout');
             return this._createOrbitalSphereLayouts();
         }
 
@@ -571,87 +561,85 @@ _describeLayouts(layouts) {
         const shaderContent = (material.fragmentShader || '').toLowerCase();
         
         if (shaderContent.includes('planettexture')) {
-            console.log('  → Orbital sphere layout (from shader content)');
+            console.log('  -> Orbital sphere layout (from shader content)');
             return this._createOrbitalSphereLayouts();
         }
         
-        console.log('  → Terrain layout');
+        console.log('  -> Terrain layout');
         return this._createTerrainBindGroupLayouts();
     }
 
+
     _createTerrainBindGroupLayouts() {
         const layouts = [];
-
-        // Group 0: Uniforms
+        
+        // Group 0: Uniforms (unchanged)
         layouts.push(this.device.createBindGroupLayout({
-            label: 'Terrain-Group0-Uniforms',
             entries: [
                 { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
                 { binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } }
             ]
         }));
-        const chunkEntries = [
-            {
-                binding: 0, // Height Texture (RGBA16F filterable)
-                visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, 
-                texture: { sampleType: 'float' }
-            },
-            {
-                binding: 1, // Normal Texture (RGBA16F filterable)
-                visibility: GPUShaderStage.FRAGMENT, 
-                texture: { sampleType: 'float' }
-            },
-            {
-                binding: 2, // Tile
-                visibility: GPUShaderStage.FRAGMENT, 
-                texture: { sampleType: 'float' }
-            },
-            {
-                binding: 3, // Splat
-                visibility: GPUShaderStage.FRAGMENT, 
-                texture: { sampleType: 'float' }
-            },
-            {
-                binding: 4, // Macro mask
-                visibility: GPUShaderStage.FRAGMENT, 
-                texture: { sampleType: 'float' }
-            }
-        ];
-        layouts.push(this.device.createBindGroupLayout({ 
-            label: 'Terrain-Group1-Textures',
-            entries: chunkEntries 
-        }));
-
-        // Group 2: Atlas & Lookups
+    
         layouts.push(this.device.createBindGroupLayout({
-            label: 'Terrain-Group2-Atlases',
             entries: [
-                { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },      // atlasTexture
-                { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },      // level2AtlasTexture
-                { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } }, // tileTypeLookup
-                { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } }, // macroTileTypeLookup
-                { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } }, // numVariantsTex
-                // Binding 5: Sampler - Needed in VERTEX to sample height map
-                { binding: 5, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
-                { binding: 6, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'non-filtering' } }
+                { 
+                    binding: 0, 
+                    visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+                    texture: { sampleType: 'unfilterable-float' } 
+                },
+                { 
+                    binding: 1, 
+                    visibility: GPUShaderStage.FRAGMENT, 
+                    texture: { sampleType: 'unfilterable-float' } 
+                },
+                { 
+                    binding: 2, 
+                    visibility: GPUShaderStage.FRAGMENT, 
+                    texture: { sampleType: 'unfilterable-float' } 
+                },
+                { 
+                    binding: 3, 
+                    visibility: GPUShaderStage.FRAGMENT, 
+                    texture: { sampleType: 'unfilterable-float' } 
+                },
+                { 
+                    binding: 4, 
+                    visibility: GPUShaderStage.FRAGMENT, 
+                    texture: { sampleType: 'unfilterable-float' } 
+                }
             ]
         }));
-
-        // Group 3: Shadows & Clusters
+        
+        // Group 2: Atlas and Lookups (unchanged)
         layouts.push(this.device.createBindGroupLayout({
-            label: 'Terrain-Group3-Lighting',
+            entries: [
+                { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+                { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+                { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
+                { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
+                { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
+                { binding: 5, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+                { binding: 6, visibility: GPUShaderStage.FRAGMENT, sampler: {} }
+            ]
+        }));
+    
+        // Group 3: Shadows and Clusters (unchanged)
+        layouts.push(this.device.createBindGroupLayout({
             entries: [
                 { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
                 { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
                 { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-                { binding: 3, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
+                { binding: 3, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
                 { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
                 { binding: 5, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
                 { binding: 6, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } }
             ]
         }));
+        
         return layouts;
     }
+    
 
     _createShadowLayouts() {
         const layouts = [];
@@ -720,7 +708,7 @@ _describeLayouts(layouts) {
     _createOrbitalSphereBindGroups(material, uniforms) {
         const groups = [];
         
-        console.log('🔗 Creating orbital sphere bind groups');
+        console.log('Creating orbital sphere bind groups');
         
         // Group 0: Uniforms
         const vertU = this._getOrCreateUniformBuffer('vert_orbital', this._packOrbitalVertexUniforms(uniforms));
@@ -740,9 +728,9 @@ _describeLayouts(layouts) {
         const planetTex = uniforms.planetTexture?.value;
         
         if (!planetTex) {
-            console.error('❌ No planetTexture uniform found!');
+            console.error('No planetTexture uniform found!');
         } else if (!planetTex._gpuTexture) {
-            console.error('❌ planetTexture has no GPU texture!');
+            console.error('planetTexture has no GPU texture!');
         }
         
         const textureView = (planetTex && planetTex._gpuTexture && planetTex._gpuTexture.view) 
@@ -751,7 +739,7 @@ _describeLayouts(layouts) {
         
         const sampler = this._samplerCache.get('linear');
         
-        console.log('  🖼️ Binding texture:', {
+        console.log('  Binding texture:', {
             hasTexture: !!planetTex,
             hasGPUTexture: !!planetTex?._gpuTexture,
             hasView: !!planetTex?._gpuTexture?.view,
@@ -768,7 +756,7 @@ _describeLayouts(layouts) {
         });
         groups.push(group1);
         
-        console.log('✅ Orbital sphere bind groups created');
+        console.log('Orbital sphere bind groups created');
         
         return groups;
     }
@@ -890,123 +878,171 @@ _describeLayouts(layouts) {
         return groups;
     }
 
+ 
     _packVertexUniforms(uniforms) {
+        // Vertex uniform buffer layout (must match VertexUniforms struct in shader):
+        //
+        // offset 0-47:   3x mat4x4 (model, view, projection) = 48 floats
+        // offset 48-51:  chunkOffset (vec2), chunkSize (f32), macroScale (f32) = 4 floats
+        // offset 52-55:  planetRadius (f32), padding (3 floats) = 4 floats
+        // offset 56-59:  planetOrigin (vec3), padding (1 float) = 4 floats
+        // offset 60-63:  chunkFace (i32), chunkLocation (vec2), chunkSizeUV (f32) = 4 slots
+        // offset 64-67:  useAtlasMode (f32), atlasUVOffset (vec2), atlasUVScale (f32) = 4 floats
+        // offset 68-71:  heightScale (f32), atlasTextureSize (f32), padding (2 floats) = 4 floats
+        //
+        // Total: 72 floats = 288 bytes (we round up to 320 for alignment)
+        
         const buffer = new ArrayBuffer(80 * 4);
         const data = new Float32Array(buffer);
         const intView = new Int32Array(buffer);
         let offset = 0;
-    
+        
+        // Helper to write a mat4x4
         const writeMat = (m) => {
-            if (m?.elements) data.set(m.elements, offset);
-            else data.set([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1], offset);
+            if (m && m.elements) {
+                data.set(m.elements, offset);
+            } else {
+                // Identity matrix
+                data.set([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1], offset);
+            }
             offset += 16;
         };
-    
-        writeMat(uniforms.modelMatrix?.value);
-        writeMat(uniforms.viewMatrix?.value);
-        writeMat(uniforms.projectionMatrix?.value);
-    
+        
+        // === Matrices (48 floats) ===
+        writeMat(uniforms.modelMatrix?.value);      // offset 0-15
+        writeMat(uniforms.viewMatrix?.value);       // offset 16-31
+        writeMat(uniforms.projectionMatrix?.value); // offset 32-47
+        
+        // === Basic chunk params (4 floats) ===
         data[offset++] = uniforms.chunkOffset?.value?.x || 0;
         data[offset++] = uniforms.chunkOffset?.value?.y || 0;
         data[offset++] = uniforms.chunkSize?.value || 128;
         data[offset++] = uniforms.macroScale?.value || 0.1;
-    
+        
+        // === Planet params (4 floats) ===
         data[offset++] = uniforms.planetRadius?.value || 50000;
         data[offset++] = 0; // padding
-        data[offset++] = 0;
-        data[offset++] = 0;
-    
+        data[offset++] = 0; // padding
+        data[offset++] = 0; // padding
+        
+        // === planetOrigin vec3 + padding (4 floats) ===
         const origin = uniforms.planetOrigin?.value;
         data[offset++] = origin?.x || 0;
         data[offset++] = origin?.y || 0;
         data[offset++] = origin?.z || 0;
+        data[offset++] = 0; // padding
         
-        intView[offset++] = uniforms.chunkFace?.value ?? -1; 
+        // === Chunk face/location (int for face, pad, then vec2) ===
+        intView[offset] = (uniforms.chunkFace?.value ?? -1);
+        offset++;
+        data[offset++] = 0; // pad to align vec2
+        data[offset++] = uniforms.chunkLocation?.value?.x || 0;
+        data[offset++] = uniforms.chunkLocation?.value?.y || 0;
+        data[offset++] = uniforms.chunkSizeUV?.value || 0.0625;
         
-        const cLoc = uniforms.chunkLocation?.value;
-        data[offset++] = cLoc?.x || 0;
-        data[offset++] = cLoc?.y || 0;
-        data[offset++] = uniforms.chunkSizeUV?.value || 1.0;
-    
+        // === Atlas UV params (4 floats) ===
         data[offset++] = uniforms.useAtlasMode?.value || 0;
-        const aOff = uniforms.atlasUVOffset?.value;
-        data[offset++] = aOff?.x || 0;
-        data[offset++] = aOff?.y || 0;
+        data[offset++] = uniforms.atlasUVOffset?.value?.x || 0;
+        data[offset++] = uniforms.atlasUVOffset?.value?.y || 0;
         data[offset++] = uniforms.atlasUVScale?.value || 1.0;
+        
+        // === Height/atlas size (4 floats) ===
         data[offset++] = uniforms.heightScale?.value || 50.0;
-        data[offset++] = uniforms.atlasTextureSize?.value || 2048;
-
+        const atlasSizeVal = uniforms.atlasTextureSize?.value;
+        data[offset++] = typeof atlasSizeVal === 'object' ? (atlasSizeVal?.x || atlasSizeVal?.width || 129) : (atlasSizeVal || 129);
+        data[offset++] = 0; // padding
+        data[offset++] = 0; // padding
+        
         return data;
     }
-
-
     _packFragmentUniforms(uniforms) {
-        const buffer = new ArrayBuffer(256 * 4);
-        const data = new Float32Array(buffer);
-        const intView = new Int32Array(buffer);
-        let offset = 0;
-    
-        // --- cameraPosition (vec3) + time (f32) = 16 bytes ---
-        const camPos = uniforms.cameraPosition?.value;
-        data[offset++] = camPos?.x ?? 0;
-        data[offset++] = camPos?.y ?? 0;
-        data[offset++] = camPos?.z ?? 0;
-        data[offset++] = uniforms.time?.value ?? 0;
-    
-        // --- chunkOffset (vec2) + chunkWidth (f32) + chunkHeight (f32) = 16 bytes ---
-        data[offset++] = uniforms.chunkOffset?.value?.x ?? 0;
-        data[offset++] = uniforms.chunkOffset?.value?.y ?? 0;
-        data[offset++] = uniforms.chunkWidth?.value ?? 128;
-        data[offset++] = uniforms.chunkHeight?.value ?? 128;
-    
-        // --- lightDirection (vec3) + padding = 16 bytes ---
-        const lightDir = uniforms.sunLightDirection?.value;
-        data[offset++] = lightDir?.x ?? 0;
-        data[offset++] = lightDir?.y ?? 1;
-        data[offset++] = lightDir?.z ?? 0;
-        data[offset++] = 0;
-    
-        // --- lightColor (vec3) + padding = 16 bytes ---
-        const lightColor = uniforms.sunLightColor?.value;
-        data[offset++] = lightColor?.r ?? 1;
-        data[offset++] = lightColor?.g ?? 1;
-        data[offset++] = lightColor?.b ?? 1;
-        data[offset++] = 0;
-    
-        // --- ambientColor (vec3) + padding = 16 bytes ---
-        const ambientColor = uniforms.ambientLightColor?.value;
-        data[offset++] = ambientColor?.r ?? 0.3;
-        data[offset++] = ambientColor?.g ?? 0.3;
-        data[offset++] = ambientColor?.b ?? 0.4;
-        data[offset++] = 0;
-    
-        // --- enableSplatLayer, enableMacroLayer, geometryLOD, currentSeason ---
-        data[offset++] = uniforms.enableSplatLayer?.value ?? 1;
-        data[offset++] = uniforms.enableMacroLayer?.value ?? 1;
-        intView[offset++] = uniforms.geometryLOD?.value ?? 0;
-        intView[offset++] = uniforms.currentSeason?.value ?? 0;
-    
-        // --- nextSeason, seasonTransition, atlasTextureSize, padding ---
-        intView[offset++] = uniforms.nextSeason?.value ?? 1;
-        data[offset++] = uniforms.seasonTransition?.value ?? 0;
+        // TEMP DIAGNOSTIC: log first terrain fragment uniforms to verify atlas UVs
+        if (!this._loggedTerrainFragUniforms && (uniforms.useAtlasMode || uniforms.atlasUVOffset || uniforms.atlasUVScale)) {
+            this._loggedTerrainFragUniforms = true;
+            console.log('[WebGPUBackend] Frag uniforms (terrain) atlas debug:', {
+                useAtlasMode: uniforms.useAtlasMode?.value,
+                atlasUVOffset: uniforms.atlasUVOffset?.value,
+                atlasUVScale: uniforms.atlasUVScale?.value,
+                chunkOffset: uniforms.chunkOffset?.value,
+                chunkWidth: uniforms.chunkWidth?.value,
+                chunkHeight: uniforms.chunkHeight?.value
+            });
+        }
+
+        // Strict std140 layout packing to match FragmentUniforms WGSL.
+        // Index mapping (floats unless noted):
+        //  0-2: cameraPosition.xyz, 3: time
+        //  4-5: chunkOffset.xy, 6: chunkWidth, 7: chunkHeight
+        //  8-10: lightDirection.xyz, 11: pad
+        // 12-14: lightColor.xyz,    15: pad
+        // 16-18: ambientColor.xyz,  19: enableSplatLayer
+        // 20: enableMacroLayer, 21: geometryLOD (i32), 22: currentSeason (i32), 23: nextSeason (i32)
+        // 24: seasonTransition, 25: atlasTextureSize, 26: _padAtlas, 27: implicit pad
+        // 28-29: atlasUVOffset.xy, 30: atlasUVScale, 31: useAtlasMode (i32), 32: isFeature
+        const buf = new ArrayBuffer(256);
+        const f32 = new Float32Array(buf);
+        const i32 = new Int32Array(buf);
+
+        // cameraPosition (vec3) + time
+        const cam = uniforms.cameraPosition?.value;
+        f32[0] = cam?.x ?? 0;
+        f32[1] = cam?.y ?? 0;
+        f32[2] = cam?.z ?? 0;
+        f32[3] = uniforms.time?.value ?? 0;
+
+        // chunk data
+        f32[4] = uniforms.chunkOffset?.value?.x ?? 0;
+        f32[5] = uniforms.chunkOffset?.value?.y ?? 0;
+        f32[6] = uniforms.chunkWidth?.value ?? uniforms.chunkSize?.value ?? 128;
+        f32[7] = uniforms.chunkHeight?.value ?? uniforms.chunkSize?.value ?? 128;
+
+        // light direction (vec3) + pad
+        const sunDir = uniforms.sunLightDirection?.value;
+        f32[8]  = sunDir?.x ?? 0;
+        f32[9]  = sunDir?.y ?? 1;
+        f32[10] = sunDir?.z ?? 0;
+        f32[11] = 0;
+
+        // light color (vec3) + pad
+        const sunCol = uniforms.sunLightColor?.value;
+        f32[12] = sunCol?.r ?? 1;
+        f32[13] = sunCol?.g ?? 1;
+        f32[14] = sunCol?.b ?? 1;
+        f32[15] = 0;
+
+        // ambient color (vec3) + enableSplatLayer
+        const amb = uniforms.ambientLightColor?.value;
+        f32[16] = amb?.r ?? 0.3;
+        f32[17] = amb?.g ?? 0.3;
+        f32[18] = amb?.b ?? 0.4;
+        f32[19] = uniforms.enableSplatLayer?.value ?? 1;
+
+        // macro toggle + seasons/LOD
+        f32[20] = uniforms.enableMacroLayer?.value ?? 1;
+        i32[21] = uniforms.geometryLOD?.value ?? 0;
+        i32[22] = uniforms.currentSeason?.value ?? 0;
+        i32[23] = uniforms.nextSeason?.value ?? 1;
+
+        // season transition / atlas size / pad
+        f32[24] = uniforms.seasonTransition?.value ?? 0;
         const atlasSize = uniforms.atlasTextureSize?.value;
-        data[offset++] = typeof atlasSize === 'object' ? (atlasSize?.x ?? 1024) : (atlasSize ?? 1024);
-        data[offset++] = 0;
-    
-        // --- atlasUVOffset (vec2) + atlasUVScale + useAtlasMode ---
+        f32[25] = typeof atlasSize === 'object'
+            ? (atlasSize?.x ?? atlasSize?.width ?? 1024)
+            : (atlasSize ?? 1024);
+        f32[26] = 0; // _padAtlas
+        f32[27] = 0; // implicit padding before vec2
+
+        // atlas UV params
         const atlasOffset = uniforms.atlasUVOffset?.value;
-        data[offset++] = atlasOffset?.x ?? 0;
-        data[offset++] = atlasOffset?.y ?? 0;
-        data[offset++] = uniforms.atlasUVScale?.value ?? 1;
-        intView[offset++] = uniforms.useAtlasMode?.value ?? 0;
-    
-        // --- isFeature + padding ---
-        data[offset++] = uniforms.isFeature?.value ?? 0;
-        data[offset++] = 0;
-        data[offset++] = 0;
-        data[offset++] = 0;
-    
-        return data;
+        f32[28] = atlasOffset?.x ?? 0;
+        f32[29] = atlasOffset?.y ?? 0;
+        f32[30] = uniforms.atlasUVScale?.value ?? 1;
+        i32[31] = uniforms.useAtlasMode?.value ?? 0;
+
+        // feature flag
+        f32[32] = uniforms.isFeature?.value ?? 0;
+
+        return f32;
     }
 
     _packDebugUniforms(uniforms) {
@@ -1039,28 +1075,31 @@ _describeLayouts(layouts) {
     }
 
     _ensureTexturesUploaded(uniforms) {
+        const skip = new Set([
+            'clusterDataTexture',
+            'lightDataTexture',
+            'lightIndicesTexture',
+            'shadowMapCascade0',
+            'shadowMapCascade1',
+            'shadowMapCascade2'
+        ]);
+
         const check = (name) => {
+            if (skip.has(name)) return; // treat lighting/shadow textures as optional
             const tex = uniforms[name]?.value;
             if (!tex) return;
     
-            // ============================================
-            // FIX: Check if texture already has GPU resources
-            // (either created directly or uploaded previously)
-            // ============================================
             if (tex._gpuTexture && tex._gpuTexture.texture && tex._gpuTexture.view) {
                 // Texture is already on GPU - either GPU-only or previously uploaded
                 // No action needed
                 return;
             }
     
-            // ============================================
-            // Only upload if we have CPU data and need upload
-            // ============================================
             if (tex._needsUpload && (tex.data || tex.image)) {
                 this.updateTexture(tex);
             } else if (!tex._gpuTexture) {
                 // Texture has no GPU resource and no way to create one
-                console.warn(`⚠️ Texture ${name} missing GPU resource and CPU data`);
+                console.warn(`Warning: Texture ${name} missing GPU resource and CPU data`);
             }
         };
     

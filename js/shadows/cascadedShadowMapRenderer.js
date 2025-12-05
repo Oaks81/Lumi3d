@@ -122,8 +122,8 @@ this.instancedDepthMaterial = new Material({
                 matrixWorldInverse: new THREE.Matrix4()
             },
             renderTarget: new RenderTarget(size, size, {
-                format: TextureFormat.RGBA8, // FIXED: Use RGBA8 instead of RGBA32F
-                minFilter: TextureFilter.LINEAR, // FIXED: Can be filtered now
+                format: TextureFormat.RGBA8,
+                minFilter: TextureFilter.LINEAR,
                 magFilter: TextureFilter.LINEAR,
                 depthBuffer: true
             }),

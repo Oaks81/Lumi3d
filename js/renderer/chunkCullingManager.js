@@ -12,7 +12,7 @@ export class ChunkCullingManager {
         this.loadDistance = this.viewDistance;
         this.unloadDistance = this.viewDistance + this.margin;
         
-        console.log(`📦 ChunkCullingManager: load=${this.loadDistance}u, unload=${this.unloadDistance}u`);
+        console.log(`ChunkCullingManager: load=${this.loadDistance}u, unload=${this.unloadDistance}u`);
     }
 
     updateVisibleChunks(terrain, cameraPosition) {

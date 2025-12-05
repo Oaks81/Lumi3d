@@ -43,7 +43,7 @@ export class AltitudeZoneManager {
         // Horizon distance calculation
         this.horizonDistance = 0;
         
-        console.log('🌍 AltitudeZoneManager initialized for', planetConfig.name);
+        console.log('AltitudeZoneManager initialized for', planetConfig.name);
     }
     
     update(cameraWorldPosition, deltaTime) {
@@ -85,7 +85,7 @@ export class AltitudeZoneManager {
         }
         
         if (this.previousZone !== this.currentZone) {
-            console.log(` Altitude zone changed: ${this.previousZone} → ${this.currentZone} (${this.altitude.toFixed(0)}m)`);
+            console.log(` Altitude zone changed: ${this.previousZone} -> ${this.currentZone} (${this.altitude.toFixed(0)}m)`);
         }
     }
     

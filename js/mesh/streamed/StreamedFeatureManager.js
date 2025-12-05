@@ -1,8 +1,7 @@
-// StreamedFeatureManager.js
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.178.0/build/three.module.js';
 import { StreamedMaterialFactory } from './StreamedMaterialFactory.js';
-import { StreamedGeometryCache } from './streamedGeometryCache.js'; // Assuming you moved the cache class here
-import { StreamedAssetConfig } from './streamedAssetConfig.js';     // ✅ NEW IMPORT
+import { StreamedGeometryCache } from './streamedGeometryCache.js';
+import { StreamedAssetConfig } from './streamedAssetConfig.js';
 /**
  * Manages GPU-driven procedurally placed features
  * (grass, flowers, ground clutter, tree leaves)
@@ -36,16 +35,13 @@ export class StreamedFeatureManager {
     this.lodDistances = options.lodDistances ;
     this.chunkSize = options.chunkSize || 64;
 
-    // Streamed feature types (not in world generator!)
-    this.streamedTypes = new Map(); // typeName -> StreamedFeatureType
+    this.streamedTypes = new Map();
 
-    // Active chunks: chunkKey -> Map<typeName, InstancedMesh>
     this.activeChunks = new Map();
 
 
-    // ✅ NEW: Internal Geometry Cache initialized here
     this.geometryCache = new StreamedGeometryCache(); 
-    this.materials = new Map(); // Shared materials (still needed)
+    this.materials = new Map();
 
     // Update tracking
     this.lastCameraPos = new THREE.Vector3();
@@ -67,28 +63,23 @@ updateCameraUniforms(cameraPosition) {
 
 
 async initialize() {
-    console.log('🌱 Initializing streamed features...');
+    console.log('Initializing streamed features...');
     
-    // 1. Load config and register generators
     this.registerStreamedFeatures(); 
 
     for (const [typeName, config] of this.streamedTypes.entries()) {
         console.log(`  Creating ${typeName} geometry and material...`);
 
-        // 2. Create geometry (and cache it)
-        // The generator returns a GeometryLodMap. We only need LOD 0 for instancing.
         const geometry = await this.geometryCache.getGeometry(typeName, config, 0); 
 
-        // 3. Create base material (no change here)
         const material = await this.createMaterial(typeName, config);
         this.materials.set(typeName, material);
         
-        console.log(`    ✅ ${typeName} ready (Geom from cache: ${geometry.attributes.position.count} vertices)`);
+        console.log(`    ${typeName} ready (Geom from cache: ${geometry.attributes.position.count} vertices)`);
     }
 
-    console.log('✅ Streamed features initialized');
+    console.log('Streamed features initialized');
 }
-// StreamedFeatureManager.js
 
 /**
  * Main update loop for the StreamedFeatureManager.
@@ -97,7 +88,6 @@ async initialize() {
  * @param {number} deltaTime - Time passed since the last frame (in seconds).
  */
 
-    // FIXED: Optimized update with proper throttling
     update(cameraPosition, terrain, deltaTime) {
         // Always update per-frame uniforms (cheap)
         this.windTime += deltaTime;
@@ -151,7 +141,7 @@ updateWind(deltaTime) {
         for (const material of this.materials.values()) {
             material.dispose();
         }
-        this.geometryCache.cleanup(); // ✅ Use the dedicated cleanup method
+        this.geometryCache.cleanup(); // Use the dedicated cleanup method
         this.materials.clear();
         this.activeChunks.clear();
     }
@@ -163,7 +153,6 @@ getLODForDistance(distance) {
 }
 // Update updateLODs with detailed logging
 updateLODs(cameraPosition) {
-//console.log(`  📊 updateLODs: Checking ${this.activeChunks.size} active chunks`);
 
 let lodChangeCount = 0;
 
@@ -192,7 +181,7 @@ for (const [chunkKey, chunkMeshes] of this.activeChunks.entries()) {
 
         // Only update if LOD changed
         if (oldLod !== newLod) {
-            console.log(`      🔄 ${typeName}: LOD ${oldLod} → ${newLod}`);
+            console.log(`      ${typeName}: LOD ${oldLod} -> ${newLod}`);
             lodChangeCount++;
 
             data.lodLevel = newLod;
@@ -200,9 +189,9 @@ for (const [chunkKey, chunkMeshes] of this.activeChunks.entries()) {
             // Update shader uniform
             if (data.mesh.material.uniforms.u_lodLevel) {
                 data.mesh.material.uniforms.u_lodLevel.value = newLod;
-                console.log(`        ✅ Updated u_lodLevel uniform`);
+                console.log(`        Updated u_lodLevel uniform`);
             } else {
-                console.warn(`        ⚠️ No u_lodLevel uniform found!`);
+                console.warn(`        Warning: No u_lodLevel uniform found!`);
             }
 
             // Update culling distances
@@ -215,19 +204,18 @@ for (const [chunkKey, chunkMeshes] of this.activeChunks.entries()) {
 
                 data.mesh.material.uniforms.u_maxDistance.value = newMaxDist;
             } else {
-                console.warn(`        ⚠️ No u_maxDistance uniform found!`);
+                console.warn(`        Warning: No u_maxDistance uniform found!`);
             }
         }
     }
 }
 
-//console.log(`  📊 updateLODs complete: ${lodChangeCount} LOD changes`);
 }
 // Update loadNewChunks with detailed logging
 loadNewChunks(cameraPosition, terrain) {
-    console.log(`  📦 loadNewChunks: Checking terrain meshes...`);
+    console.log(`  loadNewChunks: Checking terrain meshes...`);
 
-    // 🛑 We no longer calculate maxStreamRadius here.
+    // We no longer calculate maxStreamRadius here.
     // We must check ALL loaded terrain chunks.
     
     console.log(`     Terrain chunks: ${this.terrainMeshManager.chunkMeshes.size}`);
@@ -264,14 +252,13 @@ loadNewChunks(cameraPosition, terrain) {
             loadedCount++;
         } else {
             // This can happen if terrain data is not ready, it will be loaded next frame
-            console.warn(`       ⚠️ No terrain data for ${chunkKey}, cannot load streamed features yet.`);
+            console.warn(`       Warning: No terrain data for ${chunkKey}, cannot load streamed features yet.`);
         }
     }
 
-    console.log(`  📦 loadNewChunks complete: checked=${checkedCount}, skipped=${skippedCount} (already active), loaded=${loadedCount} (new)`);
+    console.log(`  loadNewChunks complete: checked=${checkedCount}, skipped=${skippedCount} (already active), loaded=${loadedCount} (new)`);
 }
 
-    // NEW: Optimized chunk loading with spatial queries
     loadNewChunksOptimized(cameraPosition, terrain) {
         const chunkSize = this.chunkSize;
         const maxRadius = Math.max(...Array.from(this.streamedTypes.values()).map(t => t.streamRadius || 100));
@@ -313,7 +300,6 @@ loadNewChunks(cameraPosition, terrain) {
         this.unloadDistantChunksOptimized(nearbyChunks);
     }
 
-    // NEW: Process a single chunk's features
     processChunkFeatures(chunkKey, cameraPosition, terrain) {
         const [cx, cy] = chunkKey.split(',').map(Number);
         
@@ -390,7 +376,6 @@ loadNewChunks(cameraPosition, terrain) {
         return changedCount > 0;
     }
 
-    // NEW: Optimized distant chunk unloading
     unloadDistantChunksOptimized(nearbyChunks) {
         const chunksToUnload = [];
         
@@ -441,7 +426,6 @@ const chunkCenter = new THREE.Vector3(
 
 const distance = cameraPosition.distanceTo(chunkCenter);
 
-// ✅ FIX: Use LODManager instead of non-existent method
 const lodLevel = this.lodManager ?
     this.lodManager.getLODForDistance(distance) : 0;
 
@@ -450,7 +434,7 @@ return {
     chunkCenter,
     lodLevel,
     chunkSize: this.chunkSize,
-    distance // ✅ Store distance for debugging
+    distance // Store distance for debugging
 };
 }
 
@@ -497,7 +481,7 @@ async streamChunks(cameraPosition, terrain) {
 
 // Update unloadDistantChunks with detailed logging
 unloadDistantChunks(cameraPosition) {
-console.log(`  🗑️ unloadDistantChunks: Checking active chunks...`);
+console.log(`  unloadDistantChunks: Checking active chunks...`);
 
 let maxStreamRadius = 0;
 for (const [typeName, config] of this.streamedTypes.entries()) {
@@ -512,7 +496,7 @@ const chunksToUnload = [];
 for (const [chunkKey, chunkMeshes] of this.activeChunks.entries()) {
     const first = chunkMeshes.values().next().value;
     if (!first || !first.chunkCenter) {
-        console.warn(`     ⚠️ Chunk ${chunkKey} has no chunkCenter!`);
+        console.warn(`     Warning: Chunk ${chunkKey} has no chunkCenter!`);
         continue;
     }
 
@@ -524,10 +508,10 @@ for (const [chunkKey, chunkMeshes] of this.activeChunks.entries()) {
     console.log(`     Chunk ${chunkKey}: dist=${distance.toFixed(1)}u`);
 
     if (distance > unloadRadius) {
-        console.log(`       🗑️ UNLOADING (dist > ${unloadRadius}u)`);
+        console.log(`       UNLOADING (dist > ${unloadRadius}u)`);
         chunksToUnload.push(chunkKey);
     } else {
-        console.log(`       ✅ KEEPING`);
+        console.log(`       KEEPING`);
     }
 }
 
@@ -535,14 +519,13 @@ for (const chunkKey of chunksToUnload) {
     this.unloadChunk(chunkKey);
 }
 
-console.log(`  🗑️ unloadDistantChunks complete: unloaded ${chunksToUnload.length} chunks`);
+console.log(`  unloadDistantChunks complete: unloaded ${chunksToUnload.length} chunks`);
 }
 
-// StreamedFeatureManager.js
 
-// ✅ REPLACE with this new version
+// REPLACE with this new version
 loadNewChunks(cameraPosition, terrain) {
-    console.log(`  📦 loadNewChunks: Checking terrain meshes...`);
+    console.log(`  loadNewChunks: Checking terrain meshes...`);
 
     let newFeaturesLoaded = 0;
     let featuresUnloaded = 0;
@@ -585,12 +568,12 @@ loadNewChunks(cameraPosition, terrain) {
             // --- 4a. LOAD NEW FEATURES ---
             // If it's NOT loaded, but IS in range, load it.
             if (!isLoaded && isInRange) {
-                console.log(`       ✅ Loading ${typeName} for ${chunkKey} (dist: ${distanceToChunk.toFixed(1)}u)`);
+                console.log(`       Loading ${typeName} for ${chunkKey} (dist: ${distanceToChunk.toFixed(1)}u)`);
 
                 // Check biome weight
                 const weight = featureDist[typeName.toLowerCase()] ?? 1.0;
                 if (weight <= 0.01) {
-                    console.log(`         ⏭️ SKIP ${typeName} (biome weight: ${weight})`);
+                    console.log(`         SKIP ${typeName} (biome weight: ${weight})`);
                     chunkMeshes.set(typeName, null); // Set 'null' to prevent re-checking
                     continue;
                 }
@@ -598,7 +581,7 @@ loadNewChunks(cameraPosition, terrain) {
                 // Get textures (needed for createTypeMesh)
                 const textures = this.getChunkTextures(cx, cy, chunkKey);
                 if (!textures) {
-                    console.warn(`         ⚠️ Missing textures for ${chunkKey}, will try again next frame.`);
+                    console.warn(`         Warning: Missing textures for ${chunkKey}, will try again next frame.`);
                     break; // Stop processing this chunk, wait for textures
                 }
 
@@ -618,7 +601,7 @@ loadNewChunks(cameraPosition, terrain) {
                     chunkMeshes.set(typeName, meshData);
                     newFeaturesLoaded++;
                 } else {
-                    console.warn(`         ⚠️ Failed to create mesh for ${typeName}`);
+                    console.warn(`         Warning: Failed to create mesh for ${typeName}`);
                     chunkMeshes.set(typeName, null); // Set 'null' to prevent re-trying
                 }
             }
@@ -628,7 +611,7 @@ loadNewChunks(cameraPosition, terrain) {
             if (isLoaded && !isInRange) {
                 const meshData = chunkMeshes.get(typeName);
                 if (meshData) { // 'meshData' might be 'null' if skipped
-                     console.log(`       🗑️ Unloading ${typeName} for ${chunkKey} (dist: ${distanceToChunk.toFixed(1)}u)`);
+                     console.log(`       Unloading ${typeName} for ${chunkKey} (dist: ${distanceToChunk.toFixed(1)}u)`);
                      this.scene.remove(meshData.mesh);
                      meshData.mesh.material.dispose();
                      // Note: We don't dispose geometry, it's shared
@@ -640,11 +623,11 @@ loadNewChunks(cameraPosition, terrain) {
     }
 
     if (newFeaturesLoaded > 0 || featuresUnloaded > 0) {
-         console.log(`  📦 loadNewChunks complete: ${newFeaturesLoaded} loaded, ${featuresUnloaded} unloaded`);
+         console.log(`  loadNewChunks complete: ${newFeaturesLoaded} loaded, ${featuresUnloaded} unloaded`);
     }
 }
 
-// ✅ REPLACE with this new version
+// REPLACE with this new version
 unloadChunk(chunkKey) {
     const chunkMeshes = this.activeChunks.get(chunkKey);
     if (!chunkMeshes) return;
@@ -658,7 +641,7 @@ unloadChunk(chunkKey) {
     }
 
     this.activeChunks.delete(chunkKey);
-    console.log(`  🗑️ Unloaded all streamed features for chunk ${chunkKey}`);
+    console.log(`  Unloaded all streamed features for chunk ${chunkKey}`);
 }
 
 
@@ -682,7 +665,7 @@ uniforms.u_chunkSize.value = chunkData.chunkSize;
 uniforms.u_gridSpacing.value = config.gridSpacing;
 uniforms.u_instancesPerRow.value = Math.ceil(chunkData.chunkSize / config.gridSpacing);
 
-// ✅ Use per-feature streaming distances
+// Use per-feature streaming distances
 uniforms.u_maxDistance.value = config.maxRenderDistance || config.streamRadius * 0.9;
 uniforms.u_taperStartDistance.value = config.taperStartDistance || config.streamRadius * 0.5;
 uniforms.u_taperEndDistance.value = config.taperEndDistance || config.streamRadius * 0.85;
@@ -704,7 +687,7 @@ uniforms.u_windStrength.value = config.windStrength || 0.05;
 // Visual
 uniforms.u_color.value = config.color || new THREE.Color(0.4, 0.7, 0.3);
 
-console.log(`  🎨 Set uniforms for ${config.name}: maxDist=${uniforms.u_maxDistance.value}u, taper=${uniforms.u_taperStartDistance.value}-${uniforms.u_taperEndDistance.value}u`);
+console.log(`  Set uniforms for ${config.name}: maxDist=${uniforms.u_maxDistance.value}u, taper=${uniforms.u_taperStartDistance.value}-${uniforms.u_taperEndDistance.value}u`);
 }
 
 
@@ -760,7 +743,7 @@ createTypeMesh(typeName, config, textures, chunkData) {
     };
 }
 registerStreamedFeatures() {
-    console.log('📖 Registering features from StreamedAssetConfig.js...');
+    console.log('Registering features from StreamedAssetConfig.js...');
     
     for (const assetDef of StreamedAssetConfig) {
         const typeName = assetDef.typeName;
@@ -779,7 +762,7 @@ registerStreamedFeatures() {
         this.geometryCache.registerGenerator(typeName, new assetDef.generatorClass());
     }
 
-    console.log(`✅ Registered ${this.streamedTypes.size} streamed types.`);
+    console.log(`Registered ${this.streamedTypes.size} streamed types.`);
 }
 
 }

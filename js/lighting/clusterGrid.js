@@ -31,7 +31,7 @@ export class ClusterGrid {
         this.debugMode = false;
         this.debugHelper = null;
         
-        console.log(`✓ ClusterGrid initialized: ${this.gridSizeX}x${this.gridSizeY}x${this.gridSizeZ} = ${this.totalClusters} clusters`);
+        console.log(`ClusterGrid initialized: ${this.gridSizeX}x${this.gridSizeY}x${this.gridSizeZ} = ${this.totalClusters} clusters`);
     }
 
       /**
@@ -99,7 +99,7 @@ export class ClusterGrid {
         this.debugHelper = group;
         scene.add(group);
         
-        console.log('✓ Cluster debug visualization created');
+        console.log('Cluster debug visualization created');
     }
     
     /**
@@ -362,7 +362,7 @@ buildClusterDataTexture() {
     getStats() {
         return {
             clusters: this.totalClusters,
-            gridSize: `${this.gridSizeX}×${this.gridSizeY}×${this.gridSizeZ}`,
+            gridSize: `${this.gridSizeX}x${this.gridSizeY}x${this.gridSizeZ}`,
             memoryBytes: this.clusterAABBs.byteLength + this.depthSlices.byteLength
         };
     }

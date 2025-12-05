@@ -6,7 +6,7 @@ export class SimpleParticleSystem {
         this.lightManager = lightManager;
         this.emitters = new Map();
         
-        console.log('✓ SimpleParticleSystem initialized');
+        console.log('SimpleParticleSystem initialized');
     }
     
     createEmitter(name, config) {
@@ -114,7 +114,7 @@ export class SimpleParticleSystem {
         this.emitters.set(name, emitter);
         this.scene.add(points);
         
-        console.log(`✓ Created emitter: ${name} with ${maxParticles} particles`);
+        console.log(`Created emitter: ${name} with ${maxParticles} particles`);
         return emitter;
     }
     

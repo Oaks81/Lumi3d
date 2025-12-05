@@ -1,16 +1,8 @@
-// js/Camera.js - COMPLETE REWRITE
-
 export class Camera {
     constructor(config = {}) {
-        // ============================================
-        // CRITICAL: Position stored in THREE.JS coordinates
-        // X = horizontal east
-        // Y = altitude (UP)
-        // Z = horizontal north
-        // ============================================
-        this.position = { x: 0, y: 50, z: 0 };  // Y is altitude!
+        this.position = { x: 0, y: 50, z: 0 };
         this.target = { x: 0, y: 0, z: 0 };
-        this.up = { x: 0, y: 1, z: 0 };  // Y-up convention
+        this.up = { x: 0, y: 1, z: 0 };
         
         this.aspect = config.aspect || 16 / 9;
         this.fov = config.fov || 75;
@@ -50,30 +42,21 @@ export class Camera {
      * Converts from game coords (x, y, z) to Three.js coords (x, y, z)
      */
     _snapToEntity(entity) {
-        // Get forward vector in game X-Y plane
         const fwd = entity.getForwardVector2D();
-        
-        // ============================================
-        // CONVERSION: Game coords → Three.js coords
-        // Game: (x, y, z) where z = altitude
-        // Three: (x, y, z) where y = altitude
-        // ============================================
-        
-        // Camera position behind ship
+
         const offsetX = -fwd.x * this.cameraDistance;
-        const offsetZ = -fwd.y * this.cameraDistance;  // Game Y → Three Z
+        const offsetZ = -fwd.y * this.cameraDistance;
         
         this.position.x = entity.position.x + offsetX;
-        this.position.y = entity.position.z + this.cameraHeight;  // Game Z → Three Y
-        this.position.z = entity.position.y + offsetZ;  // Game Y → Three Z
+        this.position.y = entity.position.z + this.cameraHeight;
+        this.position.z = entity.position.y + offsetZ;
         
-        // Look-at target in front of ship
         const targetOffsetX = fwd.x * this.lookAheadDistance;
         const targetOffsetZ = fwd.y * this.lookAheadDistance;
         
         this.target.x = entity.position.x + targetOffsetX;
-        this.target.y = entity.position.z + this.lookAheadHeight;  // Game Z → Three Y
-        this.target.z = entity.position.y + targetOffsetZ;  // Game Y → Three Z
+        this.target.y = entity.position.z + this.lookAheadHeight;
+        this.target.z = entity.position.y + targetOffsetZ;
     }
 
     
@@ -100,12 +83,10 @@ export class Camera {
         
         if (len < 0.001) return;
         
-        // Forward direction
         const fwdX = dx / len;
         const fwdY = dy / len;
         const fwdZ = dz / len;
         
-        // Right direction (perpendicular to forward in XZ plane)
         const horizLen = Math.sqrt(fwdX * fwdX + fwdZ * fwdZ);
         let rightX = 0, rightZ = 0;
         if (horizLen > 0.001) {
@@ -113,9 +94,8 @@ export class Camera {
             rightZ = fwdX / horizLen;
         }
         
-        // Movement vector
         const moveX = fwdX * forward + rightX * right;
-        const moveY = fwdY * forward + up;  // Y is vertical
+        const moveY = fwdY * forward + up;
         const moveZ = fwdZ * forward + rightZ * right;
         
         this.position.x += moveX;
@@ -137,7 +117,7 @@ export class Camera {
         
         const distance = 10;
         const dx = Math.cos(this.manualPitch) * Math.cos(this.manualYaw);
-        const dy = Math.sin(this.manualPitch);  // Y is vertical
+        const dy = Math.sin(this.manualPitch);
         const dz = Math.cos(this.manualPitch) * Math.sin(this.manualYaw);
         
         this.target.x = this.position.x + dx * distance;
@@ -153,13 +133,13 @@ export class Camera {
 
     setPosition(x, y, z) {
         this.position.x = x;
-        this.position.y = y;  // Y is altitude
+        this.position.y = y;
         this.position.z = z;
     }
 
     lookAt(x, y, z) {
         this.target.x = x;
-        this.target.y = y;  // Y is altitude
+        this.target.y = y;
         this.target.z = z;
     }
 }

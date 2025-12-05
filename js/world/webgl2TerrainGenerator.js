@@ -1,4 +1,4 @@
-// worldgen/webgl2TerrainGenerator.js (FIXED)
+// js/world/webgl2TerrainGenerator.js - FIXED with atlas support
 
 import { Texture, TextureFormat, TextureFilter, TextureWrap } from '../renderer/resources/texture.js';
 import { RenderTarget } from '../renderer/resources/RenderTarget.js';
@@ -18,6 +18,7 @@ export class WebGL2TerrainGenerator {
         this.splatDensity = splatConfig.splatDensity || 4;
         this.splatKernelSize = splatConfig.splatKernelSize || 5;
         this.textureCache = textureCache;
+        this.atlasSplatDensity = 1;
 
         this.worldScale = 1.0;
         this.elevationScale = 0.04;
@@ -81,7 +82,6 @@ export class WebGL2TerrainGenerator {
             vertexShader: terrainVertexShader,
             fragmentShader: terrainFragmentShader,
             uniforms: {
-                // FIX: Use array for ivec2 uniforms
                 u_chunkCoord: { value: [0, 0], type: 'ivec2' },
                 u_chunkSize: { value: this.chunkSize, type: 'int' },
                 u_seed: { value: this.seed, type: 'int' },
@@ -95,7 +95,8 @@ export class WebGL2TerrainGenerator {
                 u_plateauScale: { value: this.plateauScale, type: 'float' },
                 u_worldScale: { value: this.worldScale, type: 'float' },
                 u_outputType: { value: 0, type: 'int' },
-                u_renderHalo: { value: 0.0, type: 'float' }
+                u_face: { value: -1, type: 'int' },
+                u_textureSize: { value: this.chunkSize + 1, type: 'int' }
             },
             depthTest: false,
             depthWrite: false
@@ -109,7 +110,6 @@ export class WebGL2TerrainGenerator {
             uniforms: {
                 u_heightMap: { value: null, type: 'sampler2D' },
                 u_tileMap: { value: null, type: 'sampler2D' },
-                // FIX: Use array for ivec2 uniforms
                 u_chunkCoord: { value: [0, 0], type: 'ivec2' },
                 u_chunkSize: { value: this.chunkSize, type: 'int' },
                 u_splatDensity: { value: this.splatDensity, type: 'int' },
@@ -152,10 +152,243 @@ export class WebGL2TerrainGenerator {
         });
     }
 
-    async generateTerrain(chunkData, chunkX, chunkY) {
+    estimateAtlasMemory(config) {
+        const textureSize = config.textureSize;
+        const heightNormalSize = textureSize;
+        const tileSize = textureSize;
+        const splatSize = textureSize * this.atlasSplatDensity;
+        const bytesPerPixel = 16;
+        const total = (heightNormalSize**2 + heightNormalSize**2 + tileSize**2 + splatSize**2 + splatSize**2) * bytesPerPixel;
+        
+        return { total, totalMB: (total / 1024 / 1024).toFixed(2) };
+    }
+
+    async generateAtlasTextures(atlasKey, config) {
         if (!this.initialized) {
             this.initialize();
         }
+        
+        const textureSize = config.textureSize;
+        const heightNormalSize = textureSize;
+        const tileSize = textureSize;
+        const splatSize = textureSize * this.atlasSplatDensity;
+
+        const face = atlasKey.face !== null ? atlasKey.face : -1;
+        const atlasChunkX = atlasKey.atlasX * config.chunksPerAxis;
+        const atlasChunkY = atlasKey.atlasY * config.chunksPerAxis;
+
+        // Create render targets for atlas-sized textures
+        const heightRT = this.createRenderTarget(heightNormalSize, heightNormalSize, {
+            format: TextureFormat.RGBA32F
+        });
+
+        const normalRT = this.createRenderTarget(heightNormalSize, heightNormalSize, {
+            format: TextureFormat.RGBA32F,
+            minFilter: TextureFilter.LINEAR,
+            magFilter: TextureFilter.LINEAR
+        });
+
+        const tileRT = this.createRenderTarget(tileSize, tileSize, {
+            format: TextureFormat.RGBA32F,
+            minFilter: TextureFilter.NEAREST,
+            magFilter: TextureFilter.NEAREST
+        });
+
+        const macroRT = this.createRenderTarget(splatSize, splatSize, {
+            format: TextureFormat.RGBA32F,
+            minFilter: TextureFilter.LINEAR,
+            magFilter: TextureFilter.LINEAR
+        });
+
+        const splatDataRT = this.createRenderTarget(splatSize, splatSize, {
+            format: TextureFormat.RGBA32F,
+            minFilter: TextureFilter.LINEAR,
+            magFilter: TextureFilter.LINEAR
+        });
+
+        // Set uniforms for atlas generation
+        this.terrainMaterial.uniforms.u_chunkCoord.value = [atlasChunkX, atlasChunkY];
+        this.terrainMaterial.uniforms.u_face.value = face;
+        this.terrainMaterial.uniforms.u_textureSize.value = heightNormalSize;
+
+        // Generate height
+        this.terrainMaterial.uniforms.u_outputType.value = 0;
+        this.renderToTarget(heightRT, this.terrainMaterial);
+
+        // Generate normal
+        this.terrainMaterial.uniforms.u_outputType.value = 1;
+        this.renderToTarget(normalRT, this.terrainMaterial);
+
+        // Generate tile - use tile size
+        this.terrainMaterial.uniforms.u_textureSize.value = tileSize;
+        this.terrainMaterial.uniforms.u_outputType.value = 2;
+        this.renderToTarget(tileRT, this.terrainMaterial);
+
+        // Generate macro - use splat size
+        this.terrainMaterial.uniforms.u_textureSize.value = splatSize;
+        this.terrainMaterial.uniforms.u_outputType.value = 3;
+        this.renderToTarget(macroRT, this.terrainMaterial);
+
+        // Generate splat data
+        if (!heightRT.texture._gpuTexture) {
+            this.backend.createTexture(heightRT.texture);
+        }
+        if (!tileRT.texture._gpuTexture) {
+            this.backend.createTexture(tileRT.texture);
+        }
+        
+        this.splatMaterial.uniforms.u_heightMap.value = heightRT.texture;
+        this.splatMaterial.uniforms.u_tileMap.value = tileRT.texture;
+        this.splatMaterial.uniforms.u_chunkCoord.value = [atlasChunkX, atlasChunkY];
+        this.renderToTarget(splatDataRT, this.splatMaterial);
+
+        this.backend.setRenderTarget(null);
+
+        const textures = {
+            height: heightRT.texture,
+            normal: normalRT.texture,
+            tile: tileRT.texture,
+            macro: macroRT.texture,
+            splatData: splatDataRT.texture
+        };
+
+        // Set texture filtering
+        textures.normal.minFilter = TextureFilter.LINEAR;
+        textures.normal.magFilter = TextureFilter.LINEAR;
+        textures.splatData.minFilter = TextureFilter.LINEAR;
+        textures.splatData.magFilter = TextureFilter.LINEAR;
+
+        for (const tex of Object.values(textures)) {
+            tex.wrapS = TextureWrap.CLAMP;
+            tex.wrapT = TextureWrap.CLAMP;
+        }
+
+        // Cache textures
+        const bytesPerPixel = 16;
+        this.textureCache.set(atlasKey, null, 'height', textures.height, heightNormalSize * heightNormalSize * bytesPerPixel);
+        this.textureCache.set(atlasKey, null, 'normal', textures.normal, heightNormalSize * heightNormalSize * bytesPerPixel);
+        this.textureCache.set(atlasKey, null, 'tile', textures.tile, tileSize * tileSize * bytesPerPixel);
+        this.textureCache.set(atlasKey, null, 'macro', textures.macro, splatSize * splatSize * bytesPerPixel);
+        this.textureCache.set(atlasKey, null, 'splatData', textures.splatData, splatSize * splatSize * bytesPerPixel);
+
+        return {
+            atlasKey: atlasKey,
+            textures: textures,
+            memoryUsed: 0
+        };
+    }
+
+    async extractChunkDataFromAtlas(atlasKey, chunkX, chunkY, config, face = null) {
+        const heightAtlasData = this.textureCache.getAtlasForChunk(chunkX, chunkY, 'height', config, face);
+        const tileAtlasData = this.textureCache.getAtlasForChunk(chunkX, chunkY, 'tile', config, face);
+        
+        if (!heightAtlasData || !tileAtlasData) {
+            console.warn('[WebGL2TerrainGenerator] Missing atlas data for chunk', chunkX, chunkY);
+            return null;
+        }
+    
+        const localPos = config.getLocalChunkPosition(chunkX, chunkY);
+        const chunkSize = config.chunkSize;
+        
+        // Get the actual texture objects
+        const heightTex = heightAtlasData.texture;
+        const tileTex = tileAtlasData.texture;
+    
+        if (!heightTex || !tileTex) {
+            console.warn('[WebGL2TerrainGenerator] Missing texture objects');
+            return null;
+        }
+        
+        // Ensure textures have GPU resources
+        if (!heightTex._gpuTexture) {
+            this.backend.createTexture(heightTex);
+        }
+        if (!tileTex._gpuTexture) {
+            this.backend.createTexture(tileTex);
+        }
+    
+        try {
+            const heightData = await this.readTextureSubregion(
+                heightTex, 
+                localPos.localX * chunkSize, 
+                localPos.localY * chunkSize,
+                chunkSize + 1, 
+                chunkSize + 1, 
+                config.textureSize
+            );
+            
+            if (!heightData) {
+                console.warn('[WebGL2TerrainGenerator] Failed to read height data');
+                return null;
+            }
+            
+            const tileData = await this.readTextureSubregion(
+                tileTex, 
+                localPos.localX * chunkSize, 
+                localPos.localY * chunkSize,
+                chunkSize, 
+                chunkSize, 
+                config.textureSize
+            );
+            
+            if (!tileData) {
+                console.warn('[WebGL2TerrainGenerator] Failed to read tile data');
+                return null;
+            }
+            
+            return { heightData, tileData };
+        } catch(e) { 
+            console.error('[WebGL2TerrainGenerator] Error extracting chunk data:', e); 
+            return null; 
+        }
+    }
+    async readTextureSubregion(texture, offsetX, offsetY, width, height, textureWidth) {
+        const gl = this.backend.gl;
+        
+        // Create a framebuffer to read from the texture
+        const fb = gl.createFramebuffer();
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+        
+        // Ensure texture is uploaded and get the actual WebGL texture
+        if (!texture._gpuTexture) {
+            this.backend.createTexture(texture);
+        }
+        
+        // FIX: Access the actual WebGL texture object (glTexture), not the wrapper
+        const glTexture = texture._gpuTexture.glTexture;
+        
+        if (!glTexture) {
+            console.error('[WebGL2TerrainGenerator] No glTexture found on texture._gpuTexture');
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            gl.deleteFramebuffer(fb);
+            return null;
+        }
+        
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, glTexture, 0);
+        
+        const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+        if (status !== gl.FRAMEBUFFER_COMPLETE) {
+            console.error('[WebGL2TerrainGenerator] Framebuffer not complete:', status);
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            gl.deleteFramebuffer(fb);
+            return null;
+        }
+        
+        // Read the subregion
+        const data = new Float32Array(width * height * 4);
+        gl.readPixels(offsetX, offsetY, width, height, gl.RGBA, gl.FLOAT, data);
+        
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.deleteFramebuffer(fb);
+        
+        return data;
+    }
+    // Legacy per-chunk generation (backward compatibility)
+    async generateTerrain(chunkData, chunkX, chunkY, face = null) {
+        if (!this.initialized) {
+            this.initialize();
+        }
+        
         let heightTexture = this.textureCache.get(chunkX, chunkY, 'height');
         let normalTexture = this.textureCache.get(chunkX, chunkY, 'normal');
         let tileTexture = this.textureCache.get(chunkX, chunkY, 'tile');
@@ -169,7 +402,7 @@ export class WebGL2TerrainGenerator {
         let heightData, tileData;
 
         if (!hasAllTextures) {
-            const result = await this.generateAllTexturesForChunk(chunkX, chunkY);
+            const result = await this.generateAllTexturesForChunk(chunkX, chunkY, face);
 
             const size = this.chunkSize + 1;
             const tileSize = this.chunkSize;
@@ -192,33 +425,18 @@ export class WebGL2TerrainGenerator {
             heightTexture = result.textures.height;
             normalTexture = result.textures.normal;
             tileTexture = result.textures.tile;
-            splatWeightTexture = result.textures.splatWeight;
+            splatWeight = result.textures.splatWeight;
             splatTypeTexture = result.textures.splatType;
             macroTexture = result.textures.macro;
 
             heightData = result.heightData;
             tileData = result.tileData;
         } else {
-            console.log(`Using cached textures for chunk ${chunkX},${chunkY}`);
-
             const size = this.chunkSize + 1;
             const tileSize = this.chunkSize;
 
-            const heightRT = new RenderTarget(size, size, {
-                format: TextureFormat.RGBA32F,
-                depthBuffer: false
-            });
-            heightRT.colorAttachments[0] = heightTexture;
-            
-            heightData = this.backend.readPixels(heightRT, 0, 0, size, size, 'rgba');
-
-            const tileRT = new RenderTarget(tileSize, tileSize, {
-                format: TextureFormat.RGBA32F,
-                depthBuffer: false
-            });
-            tileRT.colorAttachments[0] = tileTexture;
-            
-            tileData = this.backend.readPixels(tileRT, 0, 0, tileSize, tileSize, 'rgba');
+            heightData = await this.readTextureSubregion(heightTexture, 0, 0, size, size, size);
+            tileData = await this.readTextureSubregion(tileTexture, 0, 0, tileSize, tileSize, tileSize);
         }
 
         this.populateChunkData(chunkData, chunkX, chunkY, heightData, tileData);
@@ -242,7 +460,7 @@ export class WebGL2TerrainGenerator {
         const tilesCount = tileSize * tileSize;
         chunkData.tiles = new Uint32Array(tilesCount);
         for (let i = 0; i < tilesCount; i++) {
-            chunkData.tiles[i] = Math.round(tileData[i * 4]);
+            chunkData.tiles[i] = Math.round(tileData[i * 4] * 255);
         }
 
         const heightsCount = size * size;
@@ -259,10 +477,11 @@ export class WebGL2TerrainGenerator {
         );
     }
 
-    async generateAllTexturesForChunk(chunkX, chunkY) {
+    async generateAllTexturesForChunk(chunkX, chunkY, face = null) {
         const size = this.chunkSize + 1;
         const tileSize = this.chunkSize;
         const splatSize = this.chunkSize * this.splatDensity;
+        const faceValue = face !== null ? face : -1;
 
         const heightRT = this.createRenderTarget(size, size, {
             format: TextureFormat.RGBA32F
@@ -273,11 +492,6 @@ export class WebGL2TerrainGenerator {
             minFilter: TextureFilter.LINEAR,
             magFilter: TextureFilter.LINEAR
         });
-
-    console.log(` Creating normal RT for chunk (${chunkX}, ${chunkY})`);
-    console.log(`   Requested: ${size}x${size}`);
-    console.log(`   RT object: ${normalRT.width}x${normalRT.height}`);
-    console.log(`   Texture: ${normalRT.texture.width}x${normalRT.texture.height}`);
 
         const tileRT = this.createRenderTarget(tileSize, tileSize, {
             format: TextureFormat.RGBA32F,
@@ -299,7 +513,9 @@ export class WebGL2TerrainGenerator {
         });
 
         this.terrainMaterial.uniforms.u_chunkCoord.value = [chunkX, chunkY];
+        this.terrainMaterial.uniforms.u_face.value = faceValue;
 
+        this.terrainMaterial.uniforms.u_textureSize.value = size;
         this.terrainMaterial.uniforms.u_outputType.value = 0;
         this.renderToTarget(heightRT, this.terrainMaterial);
 
@@ -307,17 +523,14 @@ export class WebGL2TerrainGenerator {
 
         this.terrainMaterial.uniforms.u_outputType.value = 1;
         this.renderToTarget(normalRT, this.terrainMaterial);
-        
-        const gl = this.backend.gl;
-        const vp = gl.getParameter(gl.VIEWPORT);
-        console.log(`   Viewport: [${vp[0]}, ${vp[1]}, ${vp[2]}, ${vp[3]}]`);
 
-
+        this.terrainMaterial.uniforms.u_textureSize.value = tileSize;
         this.terrainMaterial.uniforms.u_outputType.value = 2;
         this.renderToTarget(tileRT, this.terrainMaterial);
 
         const tileData = this.backend.readPixels(tileRT, 0, 0, tileSize, tileSize, 'rgba');
 
+        this.terrainMaterial.uniforms.u_textureSize.value = splatSize;
         this.terrainMaterial.uniforms.u_outputType.value = 3;
         this.renderToTarget(macroRT, this.terrainMaterial);
 
@@ -330,7 +543,6 @@ export class WebGL2TerrainGenerator {
         
         this.splatMaterial.uniforms.u_heightMap.value = heightRT.texture;
         this.splatMaterial.uniforms.u_tileMap.value = tileRT.texture;
-        // FIX: Set chunk coord as array for ivec2
         this.splatMaterial.uniforms.u_chunkCoord.value = [chunkX, chunkY];
         this.renderToTarget(splatRT, this.splatMaterial);
 
@@ -397,23 +609,6 @@ export class WebGL2TerrainGenerator {
         }
 
         return { featureMix: {}, ...distribution };
-    }
-
-    calculateSlope(chunkData, x, z) {
-        const h0 = chunkData.getHeight(x, z);
-        const h1 = chunkData.getHeight(Math.min(x + 1, chunkData.size - 1), z);
-        const h2 = chunkData.getHeight(x, Math.min(z + 1, chunkData.size - 1));
-        const dx = Math.abs(h1 - h0);
-        const dz = Math.abs(h2 - h0);
-        return Math.max(dx, dz);
-    }
-
-    createSeededRandom(seed) {
-        let s = seed;
-        return function() {
-            s = Math.sin(s) * 10000;
-            return s - Math.floor(s);
-        };
     }
     
     dispose() {

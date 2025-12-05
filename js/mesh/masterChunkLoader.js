@@ -1,4 +1,3 @@
-// js/mesh/masterChunkLoader.js
 import { TerrainMeshManager } from "./terrain/TerrainMeshManager.js";
 import { WaterMeshManager } from './water/WaterMeshManager.js';
 import { ChunkLoadQueue } from './chunkLoadQueue.js';
@@ -16,7 +15,6 @@ export class MasterChunkLoader {
         this.altitudeZoneManager = altitudeZoneManager;
         this.chunkSize = chunkSize;
 
-        // Initialize terrainMeshManager if we have a backend
         if (backend) {
             this.terrainMeshManager = new TerrainMeshManager(
                 backend,
@@ -29,7 +27,6 @@ export class MasterChunkLoader {
             this.terrainMeshManager = null;
         }
 
-        // Water mesh manager
         this.waterMeshManager = new WaterMeshManager(
             this.terrainMeshManager,
             textureManager,
@@ -40,7 +37,7 @@ export class MasterChunkLoader {
         this.chunkLifecycle = new Map();
         this.lastCacheCleanup = 0;
         this.cacheCleanupInterval = 5000;
-        this.loadedChunks = new Map(); // Maps string key -> entry
+        this.loadedChunks = new Map();
         
         this.debugStats = {
             loadsThisSecond: 0,
@@ -82,13 +79,10 @@ export class MasterChunkLoader {
      */
     async update(cameraPosition, terrain, deltaTime, planetConfig, sphericalMapper) {
 
-        // 1. Queue operations based on camera distance
         this.queueChunkOperations(cameraPosition, terrain);
         
-        // 2. Process the async load/unload queues
         await this.processQueues(terrain, planetConfig, sphericalMapper);
         
-        // 3. Periodic cache cleanup
         const now = performance.now();
         if (now - this.lastCacheCleanup > this.cacheCleanupInterval) {
             this.cleanupCache();
@@ -116,7 +110,6 @@ export class MasterChunkLoader {
 
         const visibleChunkKeys = new Set(terrain.keys());
 
-        // 1. Queue LOADS for visible chunks not yet loaded
         for (const [chunkKeyStr, chunkData] of terrain) {
             if (!this.loadedChunks.has(chunkKeyStr)) {
                 
@@ -138,7 +131,6 @@ export class MasterChunkLoader {
 
                 this.loadQueue.queueLoad(chunkKeyStr, priority);
 
-                // Cache data needed for loading
                 if (!this.chunkDataCache.has(chunkKeyStr)) {
                     this.chunkDataCache.set(chunkKeyStr, {
                         chunkData: chunkData,
@@ -187,11 +179,9 @@ export class MasterChunkLoader {
             }
         }
 
-        // Debug logging
         const now = performance.now();
         if (now - this.debugStats.lastSecond > 1000) {
             if (this.debugStats.loadsThisSecond > 0 || this.debugStats.unloadsThisSecond > 0) {
-                // console.log(`⚡ Chunk ops/sec: ${this.debugStats.loadsThisSecond} loads, ${this.debugStats.unloadsThisSecond} unloads`);
             }
             this.debugStats.loadsThisSecond = 0;
             this.debugStats.unloadsThisSecond = 0;

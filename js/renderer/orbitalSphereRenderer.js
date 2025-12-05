@@ -108,9 +108,6 @@ async _createMaterial() {
         ? this._getWebGPUFragmentShader()
         : this._getWebGL2FragmentShader();
     
-    // ============================================
-    // FIX: Provide explicit vertex layout for WebGPU
-    // ============================================
     let vertexLayout = null;
     if (this._apiName === 'webgpu') {
         vertexLayout: [

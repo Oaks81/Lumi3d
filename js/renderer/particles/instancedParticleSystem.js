@@ -21,7 +21,7 @@ export class InstancedParticleSystem {
         this._cameraWorldPos = new THREE.Vector3();
         this._toBillboard = new THREE.Vector3();
         
-        console.log('✓ InstancedParticleSystem initialized');
+        console.log('InstancedParticleSystem initialized');
     }
     
     createQuadGeometry() {
@@ -130,14 +130,14 @@ export class InstancedParticleSystem {
                 radius: config.light.radius || 30,
                 decay: config.light.decay || 2
             });
-            console.log(`✓ Attached point light to ${name}:`, {
+            console.log(`Attached point light to ${name}:`, {
                 intensity: emitter.light.intensity,
                 radius: emitter.light.radius,
                 color: emitter.light.color
             });
         }
         
-        console.log(`✓ Created emitter: ${name} (${maxParticles} particles, persistent: ${emitter.persistent})`);
+        console.log(`Created emitter: ${name} (${maxParticles} particles, persistent: ${emitter.persistent})`);
         return emitter;
     }
     

@@ -14,7 +14,7 @@ export class ParticleSystem {
         this.maxParticles = 10000;
         this.particlePoolSize = this.maxParticles;
         
-        console.log('✓ ParticleSystem initialized');
+        console.log('ParticleSystem initialized');
     }
     
     /**
@@ -28,7 +28,7 @@ export class ParticleSystem {
         const mesh = this.createParticleMesh(emitter);
         this.particleMeshes.set(name, mesh);
         
-        console.log(`✓ Created emitter: ${name}`);
+        console.log(`Created emitter: ${name}`);
         return emitter;
     }
     
@@ -239,7 +239,6 @@ updateParticles(emitter, mesh, deltaTime) {
         console.log(`Engine emitting ${toEmit} particles`);
     }
     
-    // FIXED: Store the initial particle count before modifying it
     const currentParticleCount = emitter.particleCount;
     
     // First pass: Update existing particles and count alive ones

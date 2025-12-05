@@ -34,7 +34,6 @@ export function getSlopeFromChunk(localX, localZ, chunk) {
     const x = Math.floor(localX);
     const z = Math.floor(localZ);
 
-    // ✅ FIXED: Call getHeightFromChunk directly (not this.getHeightFromChunk)
     const h0 = getHeightFromChunk(x, z, chunk);
     const h1 = getHeightFromChunk(x + 1, z, chunk);
     const h2 = getHeightFromChunk(x, z + 1, chunk);
@@ -56,7 +55,6 @@ export const PLANT_CONFIGS = {
             [TILE_TYPES.GRASS]: 0.85,
             [TILE_TYPES.FOREST_FLOOR]: 0.30
         },
-        // ✅ FIXED: Call functions directly (not this.function)
         shouldSpawn: (x, z, chunk) => {
             const height = getHeightFromChunk(x, z, chunk);
             const slope = getSlopeFromChunk(x, z, chunk);

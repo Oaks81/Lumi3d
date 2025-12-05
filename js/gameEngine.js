@@ -37,14 +37,12 @@ function updateCanvasResolution(canvas) {
     return { width, height, changed: false };
 }
 
-// Debug for custom WebGPU renderer
 function debugSphericalRendering() {
     console.log("=== SPHERICAL DEBUG ===");
     
     const engine = window.gameEngine;
     if (!engine) { console.log("No gameEngine"); return; }
     
-    // 1. Camera
     const cam = engine.camera;
     if (cam) {
         console.log("Camera position:", cam.position);
@@ -52,14 +50,12 @@ function debugSphericalRendering() {
         console.log("Camera near/far:", cam.near, cam.far);
     }
     
-    // 2. Chunk Manager
     const cm = engine.chunkManager;
     if (cm) {
         console.log("Loaded chunks:", cm.loadedChunks?.size || 0);
         const keys = Array.from(cm.loadedChunks?.keys() || []);
         console.log("Chunk keys (first 5):", keys.slice(0, 5));
         
-        // Check a chunk's mesh
         if (cm.loadedChunks?.size > 0) {
             const firstKey = keys[0];
             const chunk = cm.loadedChunks.get(firstKey);
@@ -74,24 +70,20 @@ function debugSphericalRendering() {
         }
     }
     
-    // 3. Renderer info
     const renderer = engine.renderer;
     if (renderer) {
         console.log("Renderer:", renderer);
         console.log("Render list count:", renderer.renderList?.length || renderer._renderList?.length || "unknown");
     }
     
-    // 4. Texture cache
     const tc = engine.textureCache;
     if (tc) {
         console.log("Texture cache entries:", tc.cache?.size || 0);
         console.log("Texture cache stats:", tc.getStats?.() || tc.stats);
-        // Show some keys
         const cacheKeys = Array.from(tc.cache?.keys() || []);
         console.log("Cache keys (first 10):", cacheKeys.slice(0, 10));
     }
     
-    // 5. Check TerrainMeshManager if exists
     const tmm = renderer?.terrainMeshManager || renderer?.chunkLoader?.terrainMeshManager;
     if (tmm) {
         console.log("TerrainMeshManager:", tmm);
@@ -199,7 +191,7 @@ export class GameEngine {
             this.planetConfig.altitudeZoneManager = this.altitudeZoneManager;
             this.sphericalMapper = new SphericalChunkMapper(this.planetConfig, 16);
         } else {
-            console.log('🗺️ Using FLAT TERRAIN mode (no planetary projection)');
+            console.log('Using FLAT TERRAIN mode (no planetary projection)');
             this.planetConfig = null;
             this.altitudeZoneManager = null;
             this.sphericalMapper = null;
@@ -210,7 +202,7 @@ export class GameEngine {
         this.inputManager = new GameInputManager(this.canvas);
         this.gameTime = new GameTime();
     
-        const useWebGPU = true;
+        const useWebGPU = false;
         const backendType = useWebGPU ? 'webgpu' : 'webgl2';
     
         this.renderer = new Frontend(this.canvas, {
@@ -238,10 +230,8 @@ export class GameEngine {
         await this.textureManager.initializeAtlases(true);
         console.log('Texture atlases loaded');
 
-        console.log('=== Testing TextureAtlasKey System ===');
+console.log('=== Testing TextureAtlasKey System ===');
 
-
-// Test 1: Chunk to atlas mapping
 const testChunks = [
     [0, 0],
     [15, 15],
@@ -251,7 +241,6 @@ const testChunks = [
 ];
 
 
-// Test 2: Parse key strings
 console.log('\n=== Testing key parsing ===');
 const testKeys = [
     'atlas_0,0_2048',
@@ -272,7 +261,7 @@ console.log('=== TextureAtlasKey tests complete ===\n');
    
         await this.renderer.initializeChunkLoader();
 
-        const useWebGPUWorldGen = true;
+        const useWebGPUWorldGen = false;
     
         if (useWebGPUWorldGen && 'gpu' in navigator) {
             console.log("Running WebGPU mode for world generation");
@@ -349,31 +338,27 @@ console.log('=== TextureAtlasKey tests complete ===\n');
         this.camera.follow(this.spaceship);
 
 
-// After creating the camera, add:
-console.log('📷 Camera created:', {
+console.log('Camera created:', {
     position: this.camera.position,
     fov: this.camera.fov,
     near: this.camera.near,
     far: this.camera.far
 });
 
-// After chunkManager.initialize(), add:
-console.log('🗺️ ChunkManager initialized:', {
+console.log('ChunkManager initialized:', {
     loadedChunks: this.chunkManager.loadedChunks.size,
     keys: Array.from(this.chunkManager.loadedChunks.keys()),
     mode: this.chunkManager.useSphericalProjection ? 'spherical' : 'flat'
 });
 
-// After spaceship.reset(), add:
-console.log('🚀 Spaceship reset:', {
+console.log('Spaceship reset:', {
     position: this.spaceship.position,
     expectedAltitude: this.planetConfig ? this.planetConfig.radius + 100 : 100
 });
 
-// Check if meshes exist after first update:
 setTimeout(() => {
     const meshManager = this.renderer?.masterChunkLoader?.terrainMeshManager;
-    console.log('🎨 Mesh check (after 1s):', {
+    console.log('Mesh check (after 1s):', {
         meshCount: meshManager?.chunkMeshes?.size || 0,
         meshKeys: meshManager ? Array.from(meshManager.chunkMeshes.keys()) : [],
         textureCache: this.textureCache?.cache?.size || 0
@@ -407,7 +392,7 @@ console.log('========== RENDER DIAGNOSTIC END ==========');
         if (this.planetConfig) {
    
             
-            const spawnHeight = 1500;  // Higher start to ensure clear view above terrain relief
+            const spawnHeight = 1500;
             spawnZ = this.planetConfig.radius + spawnHeight;
             
             console.log(' Planetary spawn calculation:', {
@@ -442,28 +427,20 @@ update(deltaTime) {
     deltaTime = Math.min(deltaTime, 0.1);
     this.gameTime.update();
 
-    // ============================================
-    // Camera position is in RENDER coords (Y-up)
-    // ============================================
     const cameraRenderPos = new THREE.Vector3(
-        this.camera.position.x,   // Render X (east)
-        this.camera.position.y,   // Render Y (altitude) ← UP!
-        this.camera.position.z    // Render Z (north)
+        this.camera.position.x,
+        this.camera.position.y,
+        this.camera.position.z
     );
 
-    // Update altitude zone manager (expects render coords)
     if (this.altitudeZoneManager) {
         this.altitudeZoneManager.update(cameraRenderPos, deltaTime);
     }
 
-    // ============================================
-    // Convert camera position to GAME coords for terrain lookup
-    // ============================================
-    const cameraGameX = cameraRenderPos.x;      // X stays same
-    const cameraGameY = cameraRenderPos.z;      // Render Z → Game Y (north)
-    const cameraGameZ = cameraRenderPos.y;      // Render Y → Game Z (altitude)
+    const cameraGameX = cameraRenderPos.x;
+    const cameraGameY = cameraRenderPos.z;
+    const cameraGameZ = cameraRenderPos.y;
 
-    // Get terrain height at spaceship position
     const terrainHeight = this.getTerrainHeightAt(
         this.spaceship.position.x,
         this.spaceship.position.y,
@@ -471,61 +448,41 @@ update(deltaTime) {
     );
 
 
-    // Get user input
     const keys = this.inputManager.getKeys();
     const mouseDelta = this.inputManager.getMouseDelta();
     const wheelDelta = this.inputManager.getWheelDelta();
 
-    // ============================================
-    // CAMERA MODE HANDLING
-    // ============================================
     if (this.cameraMode === 'manual') {
-        // Manual/free camera mode
         this.updateManualCamera(deltaTime, keys, mouseDelta);
         
     } else {
-        // Follow mode - camera follows spaceship
-        
-        // Update altitude controller (handles pitch input)
         this.altitudeController.update(deltaTime, keys);
 
-        // Update spaceship physics
         const shipState = this.spaceship.update(deltaTime, terrainHeight);
 
-        // Check for crash
         if (shipState === 'crashed') {
             this.onCrash();
         }
 
-        // Handle camera orbit controls
         if (this.inputManager.isLeftDragging()) {
             this.camera.handleOrbitInput(mouseDelta.x, mouseDelta.y);
         }
 
-        // Handle camera zoom
         if (wheelDelta !== 0) {
             this.camera.handleZoom(wheelDelta);
         }
 
-        // Update camera to follow spaceship
-        // Camera.update() handles game→Three.js conversion internally
         this.camera.update();
     }
 
-    // Update spaceship model for rendering
     this.spaceshipModel.update(this.spaceship.getState());
     if (this.renderer && this.renderer.genericMeshRenderer) {
         this.renderer.genericMeshRenderer.updateMesh('spaceship');
     }
-    // ============================================
-    // CHUNK LOADING
-    // Pass spaceship position in GAME coordinates
-    // ChunkManager will handle conversion internally
-    // ============================================
     this.chunkManager.update(
-        cameraGameX,   // Game X (east)
-        cameraGameY,   // Game Y (north)
-        cameraGameZ    // Game Z (altitude) ← UP!
+        cameraGameX,
+        cameraGameY,
+        cameraGameZ
     );
 
     this.gameState = {
@@ -538,22 +495,10 @@ update(deltaTime) {
         altitudeZoneManager: this.altitudeZoneManager
     };
     
-    // Update environment state (time of day, weather, etc.)
     this.environmentState.update(this.gameState);
 
-    // Update UI display
     this.updateUI();
 }
-// js/GameEngine.js
-
-/**
- * Get terrain height at GAME coordinates
- * @param {number} gameX - Game X (horizontal east)
- * @param {number} gameY - Game Y (horizontal north)
- * @param {number} gameZ - Game Z (altitude) - used for spherical lookup
- * @returns {number} Height in game coords
- */
-// js/GameEngine.js
 
 getTerrainHeightAt(gameX, gameY, gameZ = null) {
    
@@ -565,7 +510,6 @@ getTerrainHeightAt(gameX, gameY, gameZ = null) {
     const chunk = this.chunkManager.getChunk(chunkX, chunkY);
     
     if (!chunk) {
-        // Return safe default
         if (this.planetConfig) {
             return this.planetConfig.origin.y + this.planetConfig.radius;
         }
@@ -716,23 +660,20 @@ getTerrainHeightAt(gameX, gameY, gameZ = null) {
         const result = updateCanvasResolution(this.canvas);
         
         if (result.changed) {
-            // Update renderer viewport
             if (this.renderer && this.renderer.backend) {
                 this.renderer.backend.setViewport(0, 0, result.width, result.height);
             }
             
-            // Update camera aspect ratio
             if (this.camera) {
                 this.camera.aspect = result.width / result.height;
                 
-                // Update camera matrices if using Frontend camera
                 if (this.renderer && this.renderer.camera) {
                     this.renderer.camera.aspect = result.width / result.height;
                     this.renderer._updateCameraMatrices();
                 }
             }
             
-            console.log(' Resize handled: Camera aspect updated');
+            console.log('Resize handled: Camera aspect updated');
         }
     }
 

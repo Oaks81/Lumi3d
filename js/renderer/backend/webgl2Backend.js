@@ -48,7 +48,7 @@ uploadTextures(textures) {
     
     return uploaded;
 }
-    /** Lazy initialise type→setter map once GL context is ready */
+    /** Lazy initialise type->setter map once GL context is ready */
 _initUniformSetters() {
     if (this._uniformSetters) return;
     const gl = this.gl;
@@ -249,20 +249,16 @@ _initUniformSetters() {
         
         if (material.defines) {
             let definesString = '';
-            
             for (const [key, value] of Object.entries(material.defines)) {
-                // Skip false/null/undefined defines
-                if (!value) continue;
-                
-                // Format: #define KEY value
-                // If value is true, just define it without a value
+                if (!value) continue;  // Skip false/null/undefined
                 if (value === true) {
                     definesString += `#define ${key}\n`;
                 } else {
                     definesString += `#define ${key} ${value}\n`;
                 }
             }
-            
+            console.log('Shader defines:', definesString.trim());
+
             // Inject defines after #version directive (if present)
             const versionRegex = /^(#version\s+\d+\s+\w+\s*\n)/;
             const versionMatch = vertexSource.match(versionRegex);
@@ -581,12 +577,25 @@ _initUniformSetters() {
             );
         }
     }
-    _setUniforms(material, additionalUniforms, program) {
-        const gl = this.gl;
-        this._textureUnit = 0;
-    
-        const allUniforms = { ...material.uniforms, ...additionalUniforms };
-    
+_setUniforms(material, additionalUniforms, program) {
+    const gl = this.gl;
+    this._textureUnit = 0;
+
+    const allUniforms = { ...material.uniforms, ...additionalUniforms };
+
+    // Debug: Log texture uniforms
+    const textureUniforms = ['heightTexture', 'normalTexture', 'tileTexture', 'atlasTexture'];
+    for (const name of textureUniforms) {
+        const uniform = allUniforms[name];
+        if (uniform) {
+            const tex = uniform.value;
+            console.log(`[WebGL2] Texture ${name}:`, {
+                exists: !!tex,
+                hasGPU: !!tex?._gpuTexture,
+                size: tex ? `${tex.width}x${tex.height}` : 'N/A'
+            });
+        }
+    }
         for (const [name, uniform] of Object.entries(allUniforms)) {
             const location = program.uniformLocations[name];
             if (location == null) continue;
@@ -619,7 +628,7 @@ _initUniformSetters() {
     
             // Fallback for any texture-like object with _gpuTexture already set
             if (value?._gpuTexture) {
-                console.log(`🔗 Binding texture '${name}' to unit ${this._textureUnit}: ${value.width}x${value.height} ${value.format}`);
+                console.log(`Binding texture '${name}' to unit ${this._textureUnit}: ${value.width}x${value.height} ${value.format}`);
     
                 gl.activeTexture(gl.TEXTURE0 + this._textureUnit);
                 gl.bindTexture(gl.TEXTURE_2D, value._gpuTexture.glTexture);
@@ -850,7 +859,7 @@ _initUniformSetters() {
             [TextureFormat.RGBA8]: { internalFormat: gl.RGBA8, format: gl.RGBA, type: gl.UNSIGNED_BYTE },
             [TextureFormat.RGBA16F]: { internalFormat: gl.RGBA16F, format: gl.RGBA, type: gl.HALF_FLOAT },
             [TextureFormat.RGBA32F]: { internalFormat: gl.RGBA32F, format: gl.RGBA, type: gl.FLOAT },
-            [TextureFormat.R8]: { internalFormat: gl.R8, format: gl.RED, type: gl.UNSIGNED_BYTE }, // ← Add this
+            [TextureFormat.R8]: { internalFormat: gl.R8, format: gl.RED, type: gl.UNSIGNED_BYTE },
             [TextureFormat.R16F]: { internalFormat: gl.R16F, format: gl.RED, type: gl.HALF_FLOAT },
             [TextureFormat.R32F]: { internalFormat: gl.R32F, format: gl.RED, type: gl.FLOAT },
             [TextureFormat.DEPTH24]: { internalFormat: gl.DEPTH_COMPONENT24, format: gl.DEPTH_COMPONENT, type: gl.UNSIGNED_INT },

@@ -9,41 +9,123 @@ export class TerrainMeshManager {
         this.textureCache = textureCache;
         this.uniformManager = uniformManager;
         this.lodManager = lodManager;
-        
+
         this.chunkMeshes = new Map();
-        this.atlasConfig = null;
+        this.chunkHeightTextures = new Map();
+        this.chunkTileTextures = new Map();
+        this.chunkNormalTextures = new Map();
+
+        this.dirtyLODChunks = new Set();
+        this.lodUpdateInterval = 100;
+        this.lastLodUpdate = 0;
+
+        this.debugLODUpdates = {
+            updatesThisSecond: 0,
+            lastSecond: performance.now()
+        };
         
+        this._lastCameraPos = new THREE.Vector3();
+        
+        // =============================================
+        // NEW: Planetary configuration
+        // =============================================
+        this.planetConfig = null;
+        this.sphericalMapper = null;
+
+        console.log('TerrainMeshManager initialized', backend);
     }
 
-    /**
-     * Set atlas configuration for texture lookup
-     */
-    setAtlasConfig(config) {
-        this.atlasConfig = config;
+    // =============================================
+    // NEW: Set planetary configuration
+    // =============================================
+    setPlanetaryConfig(planetConfig, sphericalMapper) {
+        this.planetConfig = planetConfig;
+        this.sphericalMapper = sphericalMapper;
+        console.log('[TerrainMeshManager] Planetary config set:', {
+            radius: planetConfig?.radius,
+            chunksPerFace: sphericalMapper?.chunksPerFace
+        });
     }
 
+    makeChunkKey(chunkX, chunkY) {
+        return `${chunkX},${chunkY}`;
+    }
+
+    getHeightTexture(chunkX, chunkY) {
+        const chunkKey = this.makeChunkKey(chunkX, chunkY);
+        return this.chunkHeightTextures.get(chunkKey);
+    }
+
+    getNormalTexture(chunkX, chunkY) {
+        const chunkKey = this.makeChunkKey(chunkX, chunkY);
+        return this.chunkNormalTextures.get(chunkKey);
+    }
+
+    getTileTypeTexture(chunkX, chunkY) {
+        const chunkKey = this.makeChunkKey(chunkX, chunkY);
+        return this.chunkTileTextures.get(chunkKey);
+    }
+
+    _getBytesPerPixel(format) {
+        const bytesMap = {
+            'rgba8': 4,
+            'rgba16f': 8,
+            'rgba32f': 16,
+            'r8': 1,
+            'r16f': 2,
+            'r32f': 4
+        };
+        return bytesMap[format] || 4;
+    }
+    
     async addChunk(chunkData, environmentState, chunkKeyStr, planetConfig, sphericalMapper) {
-        // Unique key logic handling spherical faces
+        // =============================================
+        // Parse chunk key to detect spherical mode
+        // =============================================
         let chunkKey;
+        let faceIndex = -1;
+        let localChunkX = chunkData.chunkX;
+        let localChunkY = chunkData.chunkY;
+        
+        // Check if this is a spherical chunk (has face property)
         if (chunkData.face !== undefined && chunkData.face !== null) {
-            // Spherical mode: include face
-            chunkKey = `${chunkData.face}:${chunkData.chunkX},${chunkData.chunkY}:0`;
+            faceIndex = chunkData.face;
+            chunkKey = `${faceIndex}:${chunkData.chunkX},${chunkData.chunkY}:0`;
         } else {
-            // Flat mode
             chunkKey = `${chunkData.chunkX},${chunkData.chunkY}`;
         }
-
-
+        
+        // Try to parse from provided key string
+        if (faceIndex === -1 && chunkKeyStr && chunkKeyStr.includes(':')) {
+            const parts = chunkKeyStr.split(':');
+            if (parts.length >= 2) {
+                faceIndex = parseInt(parts[0], 10);
+                const coords = parts[1].split(',');
+                localChunkX = parseInt(coords[0], 10);
+                localChunkY = parseInt(coords[1], 10);
+                chunkKey = chunkKeyStr;
+            }
+        }
 
         if (this.chunkMeshes.has(chunkKey)) {
             return this.chunkMeshes.get(chunkKey);
         }
+
+        const offsetX = chunkData.chunkX * chunkData.size;
+        const offsetZ = chunkData.chunkY * chunkData.size;
+        
+        const isSpherical = faceIndex >= 0 && faceIndex <= 5;
+        
+        if (isSpherical) {
+            console.log(`[TerrainMeshManager] Adding spherical chunk: face=${faceIndex}, local=(${localChunkX},${localChunkY})`);
+        }
+
+        // =============================================
         // 1. Get Textures (Atlas or Legacy)
+        // =============================================
         const textureInfo = this._getChunkTextures(chunkData.chunkX, chunkData.chunkY, chunkData);
         
         if (!textureInfo.valid) {
-            console.log("bummer");
-            // Warn only once per chunk
             if (!this._warnedChunks) this._warnedChunks = new Set();
             if (!this._warnedChunks.has(chunkKey)) {
                 console.warn(` Missing textures for ${chunkKey}`);
@@ -52,120 +134,161 @@ export class TerrainMeshManager {
             return null;
         }
 
+        // =============================================
         // 2. Calculate LOD
+        // =============================================
         const cameraPos = this.uniformManager.uniforms.cameraPosition?.value || new THREE.Vector3();
-
         let lodLevel = 0;
-        const isSpherical = chunkData.face !== undefined && chunkData.face !== null;
-       
-        if (isSpherical &&  planetConfig && sphericalMapper) {
-            // SPHERICAL MODE - Calculate 3D distance to chunk center on sphere
+        
+        if (isSpherical && planetConfig && sphericalMapper) {
             const chunksPerFace = sphericalMapper.chunksPerFace;
             const planetRadius = planetConfig.radius;
             const origin = planetConfig.origin;
             
-            // Get chunk center UV on face
             const u = (chunkData.chunkX + 0.5) / chunksPerFace;
             const v = (chunkData.chunkY + 0.5) / chunksPerFace;
             
-            // Convert to sphere position
-            const cubePoint = this. getCubePoint(chunkData.face, u, v);
-    
-            const len = Math.sqrt(cubePoint.x * cubePoint.x + cubePoint.y * cubePoint.y + cubePoint.z * cubePoint.z);
-            const sphereDir = {
-                x: cubePoint.x / len,
-                y: cubePoint.y / len,
-                z: cubePoint.z / len
+            const cubePoint = this.getCubePoint(faceIndex, u, v);
+            const len = Math.sqrt(cubePoint.x*cubePoint.x + cubePoint.y*cubePoint.y + cubePoint.z*cubePoint.z);
+            const sphereDir = { x: cubePoint.x/len, y: cubePoint.y/len, z: cubePoint.z/len };
+            
+            const chunkWorldPos = {
+                x: origin.x + sphereDir.x * planetRadius,
+                y: origin.y + sphereDir.y * planetRadius,
+                z: origin.z + sphereDir.z * planetRadius
             };
             
-            const worldPos = new THREE.Vector3(
-                origin.x + sphereDir.x * planetRadius,
-                origin.y + sphereDir.y * planetRadius,
-                origin.z + sphereDir.z * planetRadius
-            );
+            const dx = cameraPos.x - chunkWorldPos.x;
+            const dy = cameraPos.y - chunkWorldPos.y;
+            const dz = cameraPos.z - chunkWorldPos.z;
+            const distance = Math.sqrt(dx*dx + dy*dy + dz*dz);
             
-            // Calculate actual 3D distance
-            const distance = cameraPos.distanceTo(worldPos);
-            lodLevel = this.lodManager.getLODForDistance(distance);
+            lodLevel = this.lodManager ? this.lodManager.getLODForDistance(distance) : 0;
             
-            // Debug log first few chunks
-            if (!this._lodDebugCount) this._lodDebugCount = 0;
-            if (true){//this._lodDebugCount < 5) {
-                console.log('[TerrainMeshManager] Spherical LOD:', {
-                    chunk: `${chunkData.face}:${chunkData.chunkX},${chunkData.chunkY}`,
-                    distance: distance.toFixed(0),
-                    lodLevel,
-                    cameraPos: { x: cameraPos.x.toFixed(0), y: cameraPos.y.toFixed(0), z: cameraPos.z.toFixed(0) },
-                    chunkWorldPos: { x: worldPos.x.toFixed(0), y: worldPos.y.toFixed(0), z: worldPos.z.toFixed(0) }
-                });
-                this._lodDebugCount++;
-            }
-        } else {
-            console.log("FLAT LOD");
-            // FLAT MODE - original calculation
-            lodLevel = this.lodManager.getLODForChunkKey(
-                `${chunkData.chunkX},${chunkData.chunkY}`,
-                cameraPos,
-                null
-            );
+            console.log('[TerrainMeshManager] Spherical LOD:', {
+                chunk: `${faceIndex}:${chunkData.chunkX},${chunkData.chunkY}`,
+                distance: distance.toFixed(0),
+                lodLevel: lodLevel,
+                cameraPos: { x: cameraPos.x.toFixed(0), y: cameraPos.y.toFixed(0), z: cameraPos.z.toFixed(0) },
+                chunkWorldPos: { x: chunkWorldPos.x.toFixed(0), y: chunkWorldPos.y.toFixed(0), z: chunkWorldPos.z.toFixed(0) }
+            });
         }
 
-        // 3. Build Geometry
-        // Uses your custom TerrainGeometryBuilder for the Backend
-        const geometry = TerrainGeometryBuilder.build(
-            chunkData,
-            chunkData.chunkX * chunkData.size, // offsetX
-            chunkData.chunkY * chunkData.size, // offsetZ
-            lodLevel,
-            true // useHeightTexture
-        );
-
+        // =============================================
+        // 3. Create Geometry
+        // =============================================
+        chunkData.lodLevel = lodLevel;
+        const geometry = TerrainGeometryBuilder.build(chunkData, offsetX, offsetZ);
         if (!geometry) {
-            console.error(`Failed to build geometry for ${chunkKey}`);
+            console.error('[TerrainMeshManager] Failed to create terrain geometry for', chunkKey);
             return null;
         }
 
-        // 4. Create Material
-        const material = await this._createTerrainMaterial(
-            chunkData, 
-            environmentState, 
-            lodLevel, 
-            textureInfo
-        );
+        // =============================================
+        // 4. Get Atlas and Lookup Textures
+        // =============================================
+        const lookupTables = this.textureManager.getLookupTables();
+        const atlasTextures = {
+            micro: this.textureManager.getAtlasTexture('micro'),
+            macro1024: this.textureManager.getAtlasTexture('macro1024')
+        };
 
-        if (!material) {
-            console.error(`Failed to create material for ${chunkKey}`);
+        if (!atlasTextures.micro || !atlasTextures.macro1024) {
+            console.error('[TerrainMeshManager] Atlas textures missing');
             return null;
         }
 
-        // 5. Compile Shader
-        if (material._needsCompile && this.backend.compileShader) {
-            try {
-                this.backend.compileShader(material);
-                material._needsCompile = false;
-            } catch (e) {
-                console.error(`Shader compile failed for ${chunkKey}`, e);
+        try {
+            // =============================================
+            // 5. Get planetary configuration
+            // =============================================
+            const pConfig = planetConfig || this.planetConfig || { radius: 50000, origin: { x: 0, y: 0, z: 0 } };
+            const sMapper = sphericalMapper || this.sphericalMapper;
+            const chunksPerFace = sMapper?.chunksPerFace || 16;
+            const renderScale = this.worldGenerator?.renderHeightScale;
+            const genScale = this.worldGenerator?.generationHeightScale || renderScale || 1.0;
+            const heightScale = chunkData.heightScale ?? (renderScale && genScale ? renderScale / genScale : renderScale ?? 1.0);
+
+            // =============================================
+            // 6. Create Material WITH spherical parameters
+            // =============================================
+            const material = await TerrainMaterialBuilder.create({
+                backend: this.backend,
+                atlasTextures,
+                lookupTables,
+                cachedTextures: textureInfo.textures,
+                chunkOffsetX: offsetX,
+                chunkOffsetZ: offsetZ,
+                chunkSize: chunkData.size,
+                environmentState,
+                uniformManager: this.uniformManager,
+                
+                // =============================================
+                // SPHERICAL PARAMETERS (NEW!)
+                // =============================================
+                faceIndex: faceIndex,
+                faceU: localChunkX,
+                faceV: localChunkY,
+                faceSize: chunksPerFace,
+                planetConfig: pConfig,
+                useAtlasMode: textureInfo.useAtlasMode,
+                uvTransform: textureInfo.uvTransform,
+                heightScale
+            });
+
+            if (!material) {
+                console.error('[TerrainMeshManager] Failed to create terrain material for', chunkKey);
                 return null;
             }
-        }
 
-        // 6. Create Entry
-        const meshEntry = {
-            geometry: geometry,
-            material: material,
-            visible: true,
-            chunkData: chunkData,
-            lodLevel: lodLevel,
-            useAtlasMode: textureInfo.useAtlasMode,
-            atlasKey: textureInfo.atlasKey,
-            uvTransform: textureInfo.uvTransform,
-            modelMatrix: new THREE.Matrix4(),
-        };
-        if (material.uniforms && !material.uniforms.modelMatrix) {
-            material.uniforms.modelMatrix = { value: meshEntry.modelMatrix };
+            // Compile Shader
+            if (material._needsCompile && this.backend.compileShader) {
+                try {
+                    this.backend.compileShader(material);
+                    material._needsCompile = false;
+                } catch (e) {
+                    console.error(`Shader compile failed for ${chunkKey}`, e);
+                    return null;
+                }
+            }
+
+            // =============================================
+            // 7. Create Entry
+            // =============================================
+            const meshEntry = {
+                geometry: geometry,
+                material: material,
+                visible: true,
+                chunkData: chunkData,
+                lodLevel: lodLevel,
+                useAtlasMode: textureInfo.useAtlasMode,
+                atlasKey: textureInfo.atlasKey,
+                uvTransform: textureInfo.uvTransform,
+                modelMatrix: new THREE.Matrix4(),
+                // Store spherical info for debugging
+                faceIndex: faceIndex,
+                localChunkX: localChunkX,
+                localChunkY: localChunkY
+            };
+            
+            if (material.uniforms && !material.uniforms.modelMatrix) {
+                material.uniforms.modelMatrix = { value: meshEntry.modelMatrix };
+            }
+            
+            this.chunkMeshes.set(chunkKey, meshEntry);
+
+            // Store texture references
+            this.chunkHeightTextures.set(chunkKey, textureInfo.textures.height);
+            this.chunkNormalTextures.set(chunkKey, textureInfo.textures.normal);
+            this.chunkTileTextures.set(chunkKey, textureInfo.textures.tile);
+
+            console.log(`[TerrainMeshManager] Chunk ${chunkKey} added (spherical=${isSpherical}, LOD=${lodLevel})`);
+            return meshEntry;
+            
+        } catch (error) {
+            console.error('[TerrainMeshManager] Error creating terrain mesh for', chunkKey, error);
+            return null;
         }
-        this.chunkMeshes.set(chunkKey, meshEntry);
-        return meshEntry;
     }
 
     getCubePoint(face, u, v) {
@@ -197,6 +320,7 @@ export class TerrainMeshManager {
             const n = this.textureCache.getAtlasForChunk(chunkX, chunkY, 'normal', null, face);
             const t = this.textureCache.getAtlasForChunk(chunkX, chunkY, 'tile', null, face);
             const s = this.textureCache.getAtlasForChunk(chunkX, chunkY, 'splatData', null, face); 
+            const m = this.textureCache.getAtlasForChunk(chunkX, chunkY, 'macro', null, face);
 
             if (h && n && t) {
                 result.valid = true;
@@ -207,137 +331,71 @@ export class TerrainMeshManager {
                     height: h.texture,
                     normal: n.texture,
                     tile: t.texture,
-                    splatData: s ? s.texture : null,
+                    splatData: s ? s.texture : h.texture,
+                    macro: m ? m.texture : h.texture
                 };
                 return result;
             }
-        } 
-        // LEGACY MODE
-        else {
-            const h = this.textureCache.get(chunkX, chunkY, 'height');
-            const n = this.textureCache.get(chunkX, chunkY, 'normal');
-            const t = this.textureCache.get(chunkX, chunkY, 'tile');
-            const s = this.textureCache.get(chunkX, chunkY, 'splatData');
+        }
 
-            if (h && n && t) {
-                result.valid = true;
-                result.useAtlasMode = false;
-                result.textures = {
-                    height: h,
-                    normal: n,
-                    tile: t,
-                    splatData: s
-                };
-                return result;
-            }
+        // LEGACY PER-CHUNK MODE
+        const height = this.textureCache.get(chunkX, chunkY, 'height');
+        const normal = this.textureCache.get(chunkX, chunkY, 'normal');
+        const tile = this.textureCache.get(chunkX, chunkY, 'tile');
+        const splatData = this.textureCache.get(chunkX, chunkY, 'splatData');
+        const macro = this.textureCache.get(chunkX, chunkY, 'macro');
+
+        if (height && tile) {
+            result.valid = true;
+            result.textures = {
+                height: height,
+                normal: normal || height,
+                tile: tile,
+                splatData: splatData || height,
+                macro: macro || height
+            };
         }
 
         return result;
     }
 
+    removeChunk(chunkX, chunkY) {
+        const chunkKey = this.makeChunkKey(chunkX, chunkY);
+        const meshEntry = this.chunkMeshes.get(chunkKey);
+        if (!meshEntry) return false;
 
-async _createTerrainMaterial(chunkData, environmentState, lodLevel, textureInfo) {
-    const atlasTextures = {
-        micro: this.textureManager.getAtlasTexture('micro'),
-        macro1024: this.textureManager.getAtlasTexture('macro_1024')
-    };
-    const lookupTables = this.textureManager.getLookupTables();
+        meshEntry.geometry.dispose();
+        this.backend.deleteShader(meshEntry.material);
+        meshEntry.material.dispose();
 
-    return await TerrainMaterialBuilder.create({
-        backend: this.backend,
-        atlasTextures,
-        lookupTables,
-        cachedTextures: textureInfo.textures,
-        chunkOffsetX: chunkData.chunkX * chunkData.size,
-        chunkOffsetZ: chunkData.chunkY * chunkData.size,
-        chunkSize: chunkData.size,
-        environmentState,
-        uniformManager: this.uniformManager,
-        lodLevel: lodLevel,
-        planetConfig: { radius: 50000.0, origin: new THREE.Vector3(0,0,0) },
-        
-      // === FIX START ===
-      faceIndex: chunkData.face ?? -1,
-            
-      // Map the CHUNK coordinates to the FACE coordinates
-      faceU: chunkData.chunkX % 16,
-      faceV: chunkData.chunkY % 16,
-      
-      // Ensure this matches your grid size (default 16 chunks across a face)
-      faceSize: 16, 
-      // === FIX END ===
-        
-        // Ensure this matches your chunks per face config (usually 16)
-        faceSize: 16, 
-        
-        useAtlasMode: textureInfo.useAtlasMode,
-        uvTransform: textureInfo.uvTransform
-    });
-}
-    updateEnvUniforms(environmentState, camera, shadowData, clusteredLightData) {
-        for (const [key, meshEntry] of this.chunkMeshes) {
-            if (!meshEntry.material || !meshEntry.material.uniforms) continue;
-            
-            const u = meshEntry.material.uniforms;
+        this.chunkMeshes.delete(chunkKey);
+        this.chunkHeightTextures.delete(chunkKey);
+        this.chunkNormalTextures.delete(chunkKey);
+        this.chunkTileTextures.delete(chunkKey);
 
-            // Camera
-            if (camera && u.cameraPosition) {
-                u.cameraPosition.value.set(camera.position.x, camera.position.y, camera.position.z);
-            }
-
-            // Lighting (Sun)
-            if (environmentState.sunLightDirection && u.sunLightDirection) {
-                u.sunLightDirection.value.copy(environmentState.sunLightDirection);
-            }
-            if (environmentState.sunLightColor && u.sunLightColor) {
-                u.sunLightColor.value.copy(environmentState.sunLightColor);
-            }
-            
-            // Fog
-            if (environmentState.fogColor && u.fogColor) {
-                u.fogColor.value.copy(environmentState.fogColor);
-            }
-            if (environmentState.fogDensity !== undefined && u.fogDensity) {
-                u.fogDensity.value = environmentState.fogDensity;
-            }
-
-            // Time / Seasons (if supported)
-            if (environmentState.time !== undefined && u.time) {
-                u.time.value = environmentState.time;
-            }
-        }
-    }
-
-    removeChunk(chunkKeyStr) {
-        // Support both spherical ("face:x,y:lod") and flat ("x,y") keys
-        const candidateKeys = [chunkKeyStr];
-        if (chunkKeyStr && chunkKeyStr.includes(':')) {
-            const parts = chunkKeyStr.split(':');
-            const face = parts[0];
-            const coords = (parts[1] || '').split(',');
-            if (coords.length === 2) {
-                const flat = `${coords[0]},${coords[1]}`;
-                const faceKey = `${face}:${coords[0]},${coords[1]}:0`;
-                candidateKeys.push(flat, faceKey);
-            }
-        }
-
-        for (const key of candidateKeys) {
-            if (!this.chunkMeshes.has(key)) continue;
-            const entry = this.chunkMeshes.get(key);
-            if (entry?.material && this.backend.deleteShader) {
-                this.backend.deleteShader(entry.material);
-                if (entry.material.dispose) entry.material.dispose();
-            }
-            this.chunkMeshes.delete(key);
-            return;
-        }
+        return true;
     }
 
     cleanup() {
-        for (const [key, entry] of this.chunkMeshes) {
-            if (entry.material) this.backend.deleteShader(entry.material);
+        for (const meshEntry of this.chunkMeshes.values()) {
+            meshEntry.geometry.dispose();
+            this.backend.deleteShader(meshEntry.material);
+            meshEntry.material.dispose();
         }
         this.chunkMeshes.clear();
+        this.chunkHeightTextures.clear();
+        this.chunkNormalTextures.clear();
+        this.chunkTileTextures.clear();
+    }
+
+    getChunkData(chunkX, chunkY) {
+        const chunkKey = this.makeChunkKey(chunkX, chunkY);
+        const meshEntry = this.chunkMeshes.get(chunkKey);
+        if (!meshEntry) return null;
+        return meshEntry;
+    }
+
+    markChunkLODDirty(chunkKey) {
+        this.dirtyLODChunks.add(chunkKey);
     }
 }

@@ -1,4 +1,3 @@
-// js/mesh/terrain/TerrainGeometry.js
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.178.0/build/three.module.js';
 
 export class TerrainGeometry {
@@ -54,7 +53,6 @@ export class TerrainGeometry {
         const verts = size + 1;
 
         if (lodLevel === 0) {
-            // Full-res grid
             for (let z = 0; z < size; z++) {
                 for (let x = 0; x < size; x++) {
                     const v00 = z * verts + x;
@@ -80,13 +78,10 @@ export class TerrainGeometry {
     }
     static buildIndicesLod3(size, verts) {
         const indices = [];
-        const stepRim = 1;      // ← FIX: Full-res rim like other LODs
-        const stepOuter = 2;    // ← ADD: Intermediate zone
-        const stepInterior = 8; // Ultra-coarse interior
+        const stepRim = 1;
+        const stepOuter = 2;
+        const stepInterior = 8;
         
-        // === 1. FULL-RES RIM (step=1 on all edges, like LOD1 and LOD2) ===
-        
-        // Top edge (z=0, z=1)
         for (let x = 0; x < size; x++) {
             const v00 = 0 * verts + x;
             const v01 = 1 * verts + x;
@@ -96,7 +91,6 @@ export class TerrainGeometry {
             indices.push(v10, v01, v11);
         }
         
-        // Bottom edge (z=size-1, z=size)
         for (let x = 0; x < size; x++) {
             const v00 = (size - 1) * verts + x;
             const v01 = size * verts + x;
@@ -106,7 +100,6 @@ export class TerrainGeometry {
             indices.push(v10, v01, v11);
         }
         
-        // Left edge (x=0, x=1, excluding corners already covered)
         for (let z = 1; z < size - 1; z++) {
             const v00 = z * verts + 0;
             const v01 = (z + 1) * verts + 0;
@@ -116,7 +109,6 @@ export class TerrainGeometry {
             indices.push(v10, v01, v11);
         }
         
-        // Right edge (x=size-1, x=size, excluding corners)
         for (let z = 1; z < size - 1; z++) {
             const v00 = z * verts + (size - 1);
             const v01 = (z + 1) * verts + (size - 1);
@@ -126,13 +118,10 @@ export class TerrainGeometry {
             indices.push(v10, v01, v11);
         }
         
-        // === 2. TRANSITION ZONE at step=2 (between rim and interior) ===
-        // Fill the area between the full-res rim and the ultra-coarse interior
         for (let z = stepOuter; z < size - stepOuter + 1; z += stepOuter) {
             for (let x = stepOuter; x < size - stepOuter + 1; x += stepOuter) {
                 if (x < stepInterior || x > size - stepInterior ||
                     z < stepInterior || z > size - stepInterior) {
-                    // This is in the transition zone
                     const v00 = z * verts + x;
                     const v01 = (z + stepOuter) * verts + x;
                     const v10 = z * verts + (x + stepOuter);
@@ -143,7 +132,6 @@ export class TerrainGeometry {
             }
         }
         
-        // === 3. ULTRA-COARSE INTERIOR (step=8) ===
         for (let z = stepInterior; z <= size - stepInterior; z += stepInterior) {
             for (let x = stepInterior; x <= size - stepInterior; x += stepInterior) {
                 if (x + stepInterior > size || z + stepInterior > size) continue;
@@ -158,11 +146,8 @@ export class TerrainGeometry {
             }
         }
         
-        // === 4. STITCHING rim (step=1) to transition zone (step=2) ===
-        // Top seam
         for (let x = stepOuter; x <= size - stepOuter; x += stepOuter) {
             const vTrans = stepOuter * verts + x;
-            // Connect to rim at z=1
             const rim1 = 1 * verts + (x - 1);
             const rim2 = 1 * verts + x;
             const rim3 = 1 * verts + (x + 1);
@@ -174,7 +159,6 @@ export class TerrainGeometry {
             }
         }
         
-        // Bottom seam
         for (let x = stepOuter; x <= size - stepOuter; x += stepOuter) {
             const vTrans = (size - stepOuter) * verts + x;
             const rim1 = (size - 1) * verts + (x - 1);
@@ -188,7 +172,6 @@ export class TerrainGeometry {
             }
         }
         
-        // Left seam
         for (let z = stepOuter; z <= size - stepOuter; z += stepOuter) {
             const vTrans = z * verts + stepOuter;
             const rim1 = (z - 1) * verts + 1;

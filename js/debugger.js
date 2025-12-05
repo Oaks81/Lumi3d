@@ -5,7 +5,7 @@
 export class ChunkDebugger {
     constructor(worldGenerator) {
         this.worldGenerator = worldGenerator;
-        this.chunks = new Map(); // Store chunks by key "x,y"
+        this.chunks = new Map();
     }
 
     /**
@@ -17,10 +17,8 @@ export class ChunkDebugger {
     debug2x2Chunks(centerX = 0, centerY = 0) {
         console.log(`\n=== Debugging 2x2 chunks starting at (${centerX}, ${centerY}) ===`);
         
-        // Generate 2x2 chunks
         const chunks = this.generate2x2Chunks(centerX, centerY);
         
-        // Verify all edges
         const report = {
             chunks: chunks,
             edgeChecks: [],
@@ -32,24 +30,20 @@ export class ChunkDebugger {
             }
         };
 
-        // Check horizontal edges
         report.edgeChecks.push(
             this.verifyHorizontalEdge(chunks.topLeft, chunks.topRight, 'Top Row'),
             this.verifyHorizontalEdge(chunks.bottomLeft, chunks.bottomRight, 'Bottom Row')
         );
 
-        // Check vertical edges
         report.edgeChecks.push(
             this.verifyVerticalEdge(chunks.topLeft, chunks.bottomLeft, 'Left Column'),
             this.verifyVerticalEdge(chunks.topRight, chunks.bottomRight, 'Right Column')
         );
 
-        // Check internal corner (where all 4 chunks meet)
         report.edgeChecks.push(
             this.verifyInternalCorner(chunks)
         );
 
-        // Compile summary
         report.edgeChecks.forEach(check => {
             report.summary.totalChecks += check.pointsChecked;
             report.summary.passed += check.passed;
@@ -60,7 +54,6 @@ export class ChunkDebugger {
             );
         });
 
-        // Print report
         this.printReport(report);
         
         return report;
@@ -115,13 +108,12 @@ export class ChunkDebugger {
 
         console.log(`\nChecking horizontal edge: ${label}`);
 
-        // Check all points along the vertical edge
         for (let y = 0; y <= size; y++) {
             const leftHeight = leftChunk.getHeight(size, y);
             const rightHeight = rightChunk.getHeight(0, y);
             const difference = Math.abs(leftHeight - rightHeight);
 
-            if (difference < 0.001) { // Floating point tolerance
+            if (difference < 0.001) {
                 result.passed++;
             } else {
                 result.failed++;
@@ -159,13 +151,12 @@ export class ChunkDebugger {
 
         console.log(`\nChecking vertical edge: ${label}`);
 
-        // Check all points along the horizontal edge
         for (let x = 0; x <= size; x++) {
             const topHeight = topChunk.getHeight(x, size);
             const bottomHeight = bottomChunk.getHeight(x, 0);
             const difference = Math.abs(topHeight - bottomHeight);
 
-            if (difference < 0.001) { // Floating point tolerance
+            if (difference < 0.001) {
                 result.passed++;
             } else {
                 result.failed++;
@@ -208,7 +199,6 @@ export class ChunkDebugger {
             bottomRight: chunks.bottomRight.getHeight(0, 0)
         };
 
-        // All 4 heights should match
         const avgHeight = (heights.topLeft + heights.topRight + heights.bottomLeft + heights.bottomRight) / 4;
         let maxDiff = 0;
 
@@ -220,14 +210,14 @@ export class ChunkDebugger {
 
         if (maxDiff < 0.001) {
             result.passed = 1;
-            console.log(`  ✓ All corners match!`);
+            console.log('  All corners match!');
         } else {
             result.failed = 1;
             result.failures.push({
                 heights: heights,
                 maxDifference: maxDiff
             });
-            console.error(`  ✗ Corner mismatch! Max difference: ${maxDiff.toFixed(4)}`);
+            console.error(`  Corner mismatch! Max difference: ${maxDiff.toFixed(4)}`);
         }
 
         result.maxDifference = maxDiff;
@@ -268,7 +258,7 @@ export class ChunkDebugger {
                 }
             });
         } else {
-            console.log('\n✓ ALL EDGE HEIGHTS MATCH PERFECTLY!');
+            console.log('\nALL EDGE HEIGHTS MATCH PERFECTLY!');
         }
 
         console.log('\n' + '='.repeat(60));
@@ -329,20 +319,3 @@ export class ChunkDebugger {
         }
     }
 }
-
-// Example usage:
-/*
-import { WorldGenerator } from './worldGenerator.js';
-
-const worldGen = new WorldGenerator(12345);
-const debugger = new ChunkDebugger(worldGen);
-
-// Test a 2x2 chunk area
-const report = debugger.debug2x2Chunks(0, 0);
-
-// Test another area
-debugger.debug2x2Chunks(10, 10);
-
-// Visual representation
-debugger.visualizeEdges(report.chunks);
-*/

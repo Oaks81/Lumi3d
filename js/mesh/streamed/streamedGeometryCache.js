@@ -10,7 +10,7 @@ export class StreamedGeometryCache {
     constructor() {
         this.generatorMap = new Map();
         this.geometryCache = new Map(); // Key: typeName|seed|lod -> Geometry
-        console.log('📦 StreamedGeometryCache initialized.');
+        console.log('StreamedGeometryCache initialized.');
     }
 
     registerGenerator(typeName, generatorInstance) {
@@ -66,6 +66,6 @@ export class StreamedGeometryCache {
             geometry.dispose();
         }
         this.geometryCache.clear();
-        console.log('📦 StreamedGeometryCache cleaned up.');
+        console.log('StreamedGeometryCache cleaned up.');
     }
 }

@@ -40,11 +40,10 @@ export class ShadowMapRenderer {
         this.tempMatrix = new THREE.Matrix4();
         this.originalMaterials = new WeakMap();
         
-        // Debug counters
         this.frameCount = 0;
         this.objectsRendered = 0;
         
-        console.log('✓ ShadowMapRenderer initialized:', {
+        console.log('ShadowMapRenderer initialized:', {
             mapSize: this.shadowMapSize,
             cameraSize: this.shadowCameraSize,
             bias: this.shadowBias,
@@ -56,18 +55,15 @@ export class ShadowMapRenderer {
         const debugFrame = this.frameCount % 60 === 0;
         
         if (debugFrame) {
-            console.group('🌑 Shadow Map Render (frame ' + this.frameCount + ')');
+            console.group('Shadow Map Render (frame ' + this.frameCount + ')');
         }
         
-        // === FIX: Stabilize shadow camera position ===
         const lightDistance = 150;
         
-        // Calculate ideal camera position
         const cameraPos = lightDirection.clone()
             .multiplyScalar(-lightDistance)
             .add(focusPoint);
         
-        // CRITICAL: Snap to texel grid to prevent swimming
         const worldUnitsPerTexel = (this.shadowCameraSize * 2) / this.shadowMapSize;
         cameraPos.x = Math.floor(cameraPos.x / worldUnitsPerTexel) * worldUnitsPerTexel;
         cameraPos.y = Math.floor(cameraPos.y / worldUnitsPerTexel) * worldUnitsPerTexel;
@@ -75,7 +71,6 @@ export class ShadowMapRenderer {
         
         this.shadowCamera.position.copy(cameraPos);
         
-        // Snap focus point too
         const snappedFocus = focusPoint.clone();
         snappedFocus.x = Math.floor(snappedFocus.x / worldUnitsPerTexel) * worldUnitsPerTexel;
         snappedFocus.y = 0; // Keep at ground level
@@ -84,8 +79,6 @@ export class ShadowMapRenderer {
         this.shadowCamera.lookAt(snappedFocus);
         this.shadowCamera.updateMatrixWorld(true);
         
-        // === FIX: Stabilize projection matrix ===
-        // Round the view matrix to prevent sub-pixel movement
         const viewMatrix = this.shadowCamera.matrixWorldInverse;
         for (let i = 0; i < 16; i++) {
             viewMatrix.elements[i] = Math.round(viewMatrix.elements[i] * 1000) / 1000;
@@ -98,7 +91,6 @@ export class ShadowMapRenderer {
             });
         }
         
-        // Build shadow matrix
         const shadowProjectionMatrix = this.shadowCamera.projectionMatrix;
         const shadowViewMatrix = this.shadowCamera.matrixWorldInverse;
         
@@ -111,7 +103,6 @@ export class ShadowMapRenderer {
         this.shadowMatrix.multiply(shadowProjectionMatrix);
         this.shadowMatrix.multiply(shadowViewMatrix);
         
-        // Count objects
         this.objectsRendered = 0;
         scene.traverse((node) => {
             if ((node.isMesh || node.isInstancedMesh) && node.visible) {
@@ -123,10 +114,8 @@ export class ShadowMapRenderer {
             console.log('Objects to render:', this.objectsRendered);
         }
         
-        // Override materials
         this.overrideMaterials(scene, this.depthMaterial);
         
-        // Render to shadow map
         const oldRenderTarget = this.renderer.getRenderTarget();
         this.renderer.setRenderTarget(this.shadowMapTarget);
         this.renderer.setClearColor(0xffffff, 1);
@@ -134,11 +123,10 @@ export class ShadowMapRenderer {
         this.renderer.render(scene, this.shadowCamera);
         this.renderer.setRenderTarget(oldRenderTarget);
         
-        // Restore materials
         this.restoreMaterials(scene);
         
         if (debugFrame) {
-            console.log('✓ Shadow map rendered');
+            console.log('Shadow map rendered');
             console.groupEnd();
         }
         

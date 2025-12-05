@@ -116,14 +116,14 @@ export function debugAtlasDetails(atlasManager, level) {
     const atlas = atlasManager.atlases.get(level);
     
     if (!atlas) {
-        console.error(`❌ No atlas found for level: ${level}`);
+        console.error(`No atlas found for level: ${level}`);
         return;
     }
 
-    console.group(`📊 ATLAS DEBUG: ${level}`);
+    console.group(`ATLAS DEBUG: ${level}`);
     
     // Basic info
-    console.group('📐 Basic Properties');
+    console.group('Basic Properties');
     console.log('Canvas exists:', !!atlas.canvas);
     console.log('Canvas dimensions:', atlas.canvas ? `${atlas.canvas.width}x${atlas.canvas.height}` : 'N/A');
     console.log('Context exists:', !!atlas.context);
@@ -132,7 +132,7 @@ export function debugAtlasDetails(atlasManager, level) {
     console.groupEnd();
 
     // Layout info
-    console.group('📏 Layout Configuration');
+    console.group('Layout Configuration');
     if (atlas.layout) {
         console.table({
             'Atlas Size': atlas.layout.atlasSize,
@@ -145,12 +145,12 @@ export function debugAtlasDetails(atlasManager, level) {
             'Max Capacity': atlas.layout.maxCapacity
         });
     } else {
-        console.log('❌ No layout defined');
+        console.log('No layout defined');
     }
     console.groupEnd();
 
     // Texture mappings
-    console.group('🗺️ Texture Mappings');
+    console.group('Texture Mappings');
     console.log('textureMap size:', atlas.textureMap.size);
     console.log('seasonalTextureMap size:', atlas.seasonalTextureMap.size);
     
@@ -162,7 +162,7 @@ export function debugAtlasDetails(atlasManager, level) {
             if (count++ >= 10) break;
             const [tileType, season, variant] = key.split(':');
             const tileName = TILE_CONFIG.find(t => t.id == tileType)?.name || 'Unknown';
-            console.log(`  ${tileName} (${tileType}) ${season} v${variant} → index ${index}`);
+            console.log(`  ${tileName} (${tileType}) ${season} v${variant} -> index ${index}`);
         }
         console.groupEnd();
     }
@@ -172,14 +172,14 @@ export function debugAtlasDetails(atlasManager, level) {
         let count = 0;
         for (const [path, index] of atlas.textureMap.entries()) {
             if (count++ >= 5) break;
-            console.log(`  ${path} → index ${index}`);
+            console.log(`  ${path} -> index ${index}`);
         }
         console.groupEnd();
     }
     console.groupEnd();
 
     // UV Calculations verification
-    console.group('📍 UV Calculation Test');
+    console.group('UV Calculation Test');
     for (let testIndex of [0, 1, 2]) {
         const uv = atlasManager.calculateUVFromIndex(level, testIndex);
         if (uv) {
@@ -196,7 +196,7 @@ export function debugAtlasDetails(atlasManager, level) {
     console.groupEnd();
 
     // Test specific tile lookups
-    console.group('🔍 Tile Lookup Tests');
+    console.group('Tile Lookup Tests');
     for (const tileType of TEST_CONFIG.tilesToTest) {
         const tileName = TILE_CONFIG.find(t => t.id === tileType)?.name || 'Unknown';
         console.group(`${tileName} (${tileType})`);
@@ -219,7 +219,7 @@ export function debugAtlasDetails(atlasManager, level) {
     console.groupEnd();
 
     // Canvas pixel sampling
-    console.group('🎨 Canvas Pixel Sampling');
+    console.group('Canvas Pixel Sampling');
     if (atlas.canvas && atlas.context && atlas.layout) {
         const { paddedTextureSize, textureSize } = atlas.layout;
         const padding = atlas.layout.padding || atlasManager.PADDING;
@@ -252,7 +252,7 @@ export function debugAtlasDetails(atlasManager, level) {
     console.groupEnd();
 
     // Three.js texture properties
-    console.group('🎮 Three.js Texture Properties');
+    console.group('Three.js Texture Properties');
     if (atlas.texture) {
         console.table({
             'UUID': atlas.texture.uuid,
@@ -275,13 +275,13 @@ export function debugAtlasDetails(atlasManager, level) {
 
 // Add to debugAtlas.js - Detailed comparison function
 export function compareAtlasImplementations(fileAtlas, procAtlas, level) {
-    console.group(`🔬 DETAILED COMPARISON: ${level}`);
+    console.group(`DETAILED COMPARISON: ${level}`);
     
     const fileAtlasData = fileAtlas.atlases.get(level);
     const procAtlasData = procAtlas.atlases.get(level);
     
     // 1. Canvas Properties
-    console.group('🖼️ Canvas Properties');
+    console.group('Canvas Properties');
     console.table({
         'Canvas Width': {
             file: fileAtlasData.canvas?.width,
@@ -297,7 +297,7 @@ export function compareAtlasImplementations(fileAtlas, procAtlas, level) {
     console.groupEnd();
     
     // 2. Layout Properties
-    console.group('📐 Layout Properties');
+    console.group('Layout Properties');
     const layoutProps = ['atlasSize', 'textureSize', 'paddedTextureSize', 'padding', 'tilesPerRow', 'rows', 'totalTextures', 'maxCapacity'];
     const layoutComparison = {};
     
@@ -314,7 +314,7 @@ export function compareAtlasImplementations(fileAtlas, procAtlas, level) {
     console.groupEnd();
     
     // 3. Three.js Texture Properties
-    console.group('🎮 Three.js Texture Properties');
+    console.group('Three.js Texture Properties');
     const textureProps = ['minFilter', 'magFilter', 'wrapS', 'wrapT', 'generateMipmaps', 'anisotropy', 'format', 'type', 'encoding'];
     const textureComparison = {};
     
@@ -331,7 +331,7 @@ export function compareAtlasImplementations(fileAtlas, procAtlas, level) {
     console.groupEnd();
     
     // 4. UV Coordinate Comparison for same tiles
-    console.group('📍 UV Coordinate Comparison');
+    console.group('UV Coordinate Comparison');
     const testIndices = [0, 1, 2, 3];
     
     for (const index of testIndices) {
@@ -355,7 +355,7 @@ export function compareAtlasImplementations(fileAtlas, procAtlas, level) {
     console.groupEnd();
     
     // 5. Tile Position Comparison
-    console.group('🎯 Tile Position Comparison (Pixel Coordinates)');
+    console.group('Tile Position Comparison (Pixel Coordinates)');
     const layout = fileAtlasData.layout;
     
     for (const index of testIndices) {
@@ -388,7 +388,7 @@ export function compareAtlasImplementations(fileAtlas, procAtlas, level) {
     console.groupEnd();
     
     // 6. Pixel Sampling Comparison
-    console.group('🎨 Pixel Sampling Comparison');
+    console.group('Pixel Sampling Comparison');
     if (fileAtlasData.canvas && procAtlasData.canvas && fileAtlasData.context && procAtlasData.context) {
         for (const index of testIndices.slice(0, 2)) { // Just check first 2 to avoid clutter
             if (index >= layout.totalTextures) continue;
@@ -428,7 +428,7 @@ export function compareAtlasImplementations(fileAtlas, procAtlas, level) {
     console.groupEnd();
     
     // 7. Padding Region Comparison
-    console.group('🔲 Padding Region Comparison');
+    console.group('Padding Region Comparison');
     if (fileAtlasData.canvas && procAtlasData.canvas && fileAtlasData.context && procAtlasData.context) {
         const index = 1; // Check second tile's padding
         if (index < layout.totalTextures) {
@@ -467,7 +467,7 @@ export function compareAtlasImplementations(fileAtlas, procAtlas, level) {
     console.groupEnd();
     
     // 8. Check for any mismatches
-    console.group('⚠️ Summary of Differences');
+    console.group('Warning: Summary of Differences');
     const differences = [];
     
     if (fileAtlasData.canvas?.width !== procAtlasData.canvas?.width) {
@@ -490,13 +490,13 @@ export function compareAtlasImplementations(fileAtlas, procAtlas, level) {
     }
     
     if (differences.length === 0) {
-        console.log('✅ No structural differences found between file-based and procedural atlases!');
-        console.log('🔍 If seams are still visible, the issue may be in:');
+        console.log('No structural differences found between file-based and procedural atlases!');
+        console.log('If seams are still visible, the issue may be in:');
         console.log('   - Texture content quality (procedural generation artifacts)');
         console.log('   - Padding implementation (check addTexturePadding method)');
         console.log('   - GPU texture filtering at runtime');
     } else {
-        console.log('❌ Differences found:');
+        console.log('Differences found:');
         differences.forEach(diff => console.log(`   - ${diff}`));
     }
     console.groupEnd();
@@ -506,16 +506,16 @@ export function compareAtlasImplementations(fileAtlas, procAtlas, level) {
 
 // Update the test runner to use this comparison
 export async function runAtlasComparison() {
-    console.log('🧪 Starting Atlas Comparison Test');
+    console.log('Starting Atlas Comparison Test');
     console.log('================================');
     
     // Create file-based atlas
-    console.log('\n📁 Creating FILE-BASED atlas...');
+    console.log('\nCreating FILE-BASED atlas...');
     const fileAtlas = new TextureAtlasManager();
     await fileAtlas.initializeAtlases(false);
     
     // Create procedural atlas
-    console.log('\n🎨 Creating PROCEDURAL atlas...');
+    console.log('\nCreating PROCEDURAL atlas...');
     const procAtlas = new TextureAtlasManager();
     await procAtlas.initializeAtlases(true);
     
@@ -525,28 +525,28 @@ export async function runAtlasComparison() {
     
     // Test each level
     for (const level of TEST_CONFIG.levelsToTest) {
-        console.log(`\n\n🔬 Testing Level: ${level}`);
-        console.log('━'.repeat(50));
+        console.log(`\n\nTesting Level: ${level}`);
+        console.log('-'.repeat(50));
         
         // Render both atlases
-        console.log('\n📊 Rendering atlases...');
+        console.log('\nRendering atlases...');
         renderAtlasToCanvas(fileAtlas, level, `atlas-file-${level}`);
         renderAtlasToCanvas(procAtlas, level, `atlas-proc-${level}`);
         
         // Debug file-based atlas
-        console.log('\n📁 FILE-BASED Atlas Details:');
+        console.log('\nFILE-BASED Atlas Details:');
         debugAtlasDetails(fileAtlas, level);
         
         // Debug procedural atlas
-        console.log('\n🎨 PROCED URAL Atlas Details:');
+        console.log('\nPROCED URAL Atlas Details:');
         debugAtlasDetails(procAtlas, level);
         
         // NEW: Detailed comparison
-        console.log('\n🔍 DETAILED COMPARISON:');
+        console.log('\nDETAILED COMPARISON:');
         compareAtlasImplementations(fileAtlas, procAtlas, level);
     }
     
-    console.log('\n\n🏁 Atlas Comparison Complete!');
+    console.log('\n\nAtlas Comparison Complete!');
     console.log('Check the rendered canvases and comparison details above.');
     
     return { fileAtlas, procAtlas };
@@ -580,16 +580,16 @@ export async function downloadCpuAndGpuAtlases(options = {}) {
       delayBetweenDownloadsMs = 150
     } = options;
   
-    console.group('🔁 Generating CPU vs GPU procedural atlases (debug)');
+    console.group('Generating CPU vs GPU procedural atlases (debug)');
     try {
       // 1) CPU procedural atlas manager
 
       // 2) GPU procedural atlas manager
-      console.log('⏳ Creating GPU procedural atlas manager...');
+      console.log('Creating GPU procedural atlas manager...');
       const gpuAtlasMgr = new TextureAtlasManager();
       // initializeAtlases(procedural = true, cpu = false)
       await gpuAtlasMgr.initializeAtlases(true, false);
-      console.log('✅ GPU procedural atlases generated.');
+      console.log('GPU procedural atlases generated.');
   
       // Determine which levels to operate on
       const levelsToProcess = levels || Array.from(gpuAtlasMgr.atlases.keys());
@@ -627,7 +627,7 @@ export async function downloadCpuAndGpuAtlases(options = {}) {
             container.style.border = '1px solid #333';
             container.style.padding = '6px';
             container.style.background = '#222';
-            const label = makeLabel(`GPU procedural — level: ${level}`);
+            const label = makeLabel(`GPU procedural - level: ${level}`);
             container.appendChild(label);
   
             const c = document.createElement('canvas');
@@ -645,7 +645,7 @@ export async function downloadCpuAndGpuAtlases(options = {}) {
       }
   
       // Download canvases (CPU then GPU) for each level
-      console.log('📥 Downloading atlas PNGs (CPU then GPU)...');
+      console.log('Downloading atlas PNGs (CPU then GPU)...');
   
       for (const level of levelsToProcess) {
         const gpuAtlas = gpuAtlasMgr.atlases.get(level);
@@ -665,7 +665,7 @@ export async function downloadCpuAndGpuAtlases(options = {}) {
         }
       }
   
-      console.log('✅ Downloads queued for CPU and GPU atlases.');
+      console.log('Downloads queued for CPU and GPU atlases.');
       console.groupEnd();
   
       // Return atlas managers for further inspection in the console if caller wants them

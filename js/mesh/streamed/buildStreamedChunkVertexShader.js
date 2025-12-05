@@ -1,35 +1,25 @@
-// buildStreamedChunkVertexShader.js
 export function buildStreamedChunkVertexShader() {
     return `precision highp float;
 precision highp int;
 
-// ═══════════════════════════════════════════════════
-// UNIFORMS
-// ═══════════════════════════════════════════════════
-
-uniform float u_noiseSeed; // ✅ ADD THIS NEW UNIFORM
-// Chunk data
+uniform float u_noiseSeed;
 uniform vec2 u_chunkOffset;
 uniform float u_chunkSize;
 uniform float u_gridSpacing;
 uniform int u_instancesPerRow;
 
-// LOD configuration
 uniform float u_maxDistance;
 uniform float u_taperStartDistance;
 uniform float u_taperEndDistance;
 uniform float u_minCullDistance;
 
-// Feature configuration
 uniform float u_density;
 uniform float u_waterLevel;
 uniform vec3 u_cameraPosition;
 
-// Textures
 uniform sampler2D u_heightTexture;
 uniform sampler2D u_tileTypeTexture;
 
-// Wind animation
 uniform float u_time;
 uniform float u_windStrength;
 
@@ -38,10 +28,6 @@ varying vec3 v_worldPos;
 varying vec2 vUv;
 varying float v_alpha;
 varying vec3 v_viewPos;
-
-// ═══════════════════════════════════════════════════
-// UTILITY FUNCTIONS
-// ═══════════════════════════════════════════════════
 
 float hash(float x, float y, float seed) {
     return fract(sin(dot(vec3(x, y, seed), vec3(12.9898, 78.233, 45.164))) * 43758.5453);
@@ -62,9 +48,6 @@ bool isCulledByFrustum(vec3 worldPos, float radius) {
             clipPos.z < -clipPos.w - margin || clipPos.z > clipPos.w + margin);
 }
 
-// ═══════════════════════════════════════════════════
-// MAIN
-// ═══════════════════════════════════════════════════
 void main() {
     int instanceID = gl_InstanceID;
     int gridX = instanceID % u_instancesPerRow;
@@ -73,7 +56,6 @@ void main() {
     float fGridX = float(gridX);
     float fGridZ = float(gridZ);
     
-    // ✅ Use u_noiseSeed to make the pattern unique for this feature type
     float jitterX = hash(fGridX, fGridZ, 0.1 + u_noiseSeed) * u_gridSpacing * 0.8;
     float jitterZ = hash(fGridX, fGridZ, 0.2 + u_noiseSeed) * u_gridSpacing * 0.8;
 
@@ -92,10 +74,10 @@ void main() {
         return;
     }
     
-float cullMargin = u_gridSpacing * 1.5; // Account for grid cell size + half the blade size
+float cullMargin = u_gridSpacing * 1.5;
     float cullDistance = u_maxDistance + hash(fGridX, fGridZ, 0.5 + u_noiseSeed) * cullMargin;
 
-    if (distanceToCamera > cullDistance) { // ✅ Use the new cullDistance
+    if (distanceToCamera > cullDistance) {
         gl_Position = vec4(2.0, 2.0, 2.0, 0.0);
         return;
     }

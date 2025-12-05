@@ -72,11 +72,10 @@ export class DebugHelper {
         });
         
         this.scene.add(this.lightHelperGroup);
-        console.log('✓ Created light debug helpers');
+        console.log('Created light debug helpers');
     }
 
     _createPointLightHelper(light, index) {
-        // Inner sphere
         const innerGeometry = new THREE.SphereGeometry(2, 16, 16);
         const innerMaterial = new THREE.MeshBasicMaterial({
             color: light.color,
@@ -86,12 +85,10 @@ export class DebugHelper {
         const innerSphere = new THREE.Mesh(innerGeometry, innerMaterial);
         innerSphere.position.copy(light.position);
         
-        // Label
         const sprite = this._createLabelSprite(`L${index}`);
         sprite.position.copy(light.position);
         sprite.position.y += 5;
         
-        // Outer wireframe sphere
         const outerGeometry = new THREE.SphereGeometry(light.radius, 16, 16);
         const outerMaterial = new THREE.MeshBasicMaterial({
             color: light.color,

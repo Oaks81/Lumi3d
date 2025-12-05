@@ -1,6 +1,3 @@
-// js/world/webgpuWorldGenerator.js
-
-
 import { BaseWorldGenerator } from './baseWorldGenerator.js';
 import { WebGPUTerrainGenerator } from "./webgpuTerrainGenerator.js";
 import { ChunkData } from "./chunkData.js";
@@ -11,8 +8,9 @@ export class WebGPUWorldGenerator extends BaseWorldGenerator {
     constructor(renderer, textureCache, chunkSize, seed) {
         super(renderer, textureCache, chunkSize, seed);
         
-        // Atlas mode flag - set to true to use atlas textures
         this.useAtlasMode = true;
+        this.generationHeightScale = 40.0;
+        this.renderHeightScale = 2000.0;
     }
 
     getAPIName() {
@@ -66,6 +64,7 @@ export class WebGPUWorldGenerator extends BaseWorldGenerator {
                 this.splatConfig,
                 this.textureCache
             );
+            this.modules.tiledTerrain.instance.heightScale = this.generationHeightScale;
             
             await this.modules.tiledTerrain.instance.initialize();
         }
@@ -80,26 +79,22 @@ export class WebGPUWorldGenerator extends BaseWorldGenerator {
             console.error('[WebGPUWorldGenerator] Invalid chunk coordinates: (' + chunkX + ',' + chunkY + ')');
             throw new Error('Invalid chunk coordinates: chunkX=' + chunkX + ', chunkY=' + chunkY);
         }
-        
-      //  console.log('[WebGPUWorldGenerator] generateChunk(' + chunkX + ', ' + chunkY + ', face=' + face + ', lod=' + lod + ')');
-        
-        // Create chunk data structure
+
         const chunkData = new ChunkData(chunkX, chunkY, this.chunkSize);
-        chunkData.face = face; // Store the face ID!
+        const genScale = Math.max(this.generationHeightScale, 0.0001);
+        chunkData.heightScale = this.renderHeightScale / genScale;
+        chunkData.face = face;
         if (this.planetConfig) {
             chunkData.isSpherical = true;
             chunkData.baseAltitude = this.planetConfig.radius;
         }
         
         if (this.useAtlasMode) {
-            // Atlas mode: generate or get atlas, then reference it
             await this._setupAtlasTextures(chunkData, chunkX, chunkY, face);
         } else {
-            // Legacy mode: generate per-chunk textures
             await this._setupLegacyTextures(chunkData, chunkX, chunkY);
         }
 
-        // Calculate water visibility
         chunkData.calculateWaterVisibility(this.globalWaterLevel);
 
         if (chunkData.hasWater || chunkData.isFullySubmerged) {
@@ -115,7 +110,6 @@ export class WebGPUWorldGenerator extends BaseWorldGenerator {
             chunkData.waterFeatures = [];
         }
 
-        // Generate static objects
         if (this.modules.staticObjects.enabled && !chunkData.isFullySubmerged) {
             this.generateObjectData(chunkData, chunkX, chunkY);
         }
@@ -127,7 +121,6 @@ export class WebGPUWorldGenerator extends BaseWorldGenerator {
      * Setup atlas textures for a chunk (Phase 4 key method)
      */
     async _setupAtlasTextures(chunkData, chunkX, chunkY, face) {
-        // Ensure atlas exists
         const needsAtlas = !this.hasAtlasForChunk(chunkX, chunkY, face);
         
         if (needsAtlas) {
@@ -135,24 +128,15 @@ export class WebGPUWorldGenerator extends BaseWorldGenerator {
             await this.generateAtlasForChunk(chunkX, chunkY, face);
         }
         
-        // Get atlas key and UV transform
         const atlasKey = TextureAtlasKey.fromChunkCoords(chunkX, chunkY, face, this.atlasConfig);
         const uvTransform = this.atlasConfig.getChunkUVTransform(chunkX, chunkY);
         
-        // Store atlas info in chunk data
         chunkData.atlasKey = atlasKey;
         chunkData.uvTransform = uvTransform;
         chunkData.useAtlasMode = true;
-        /*
-        console.log('[WebGPUWorldGenerator] Chunk UV transform: offset=(' + 
-            uvTransform.offsetX.toFixed(4) + ',' + uvTransform.offsetY.toFixed(4) + 
-            '), scale=' + uvTransform.scale.toFixed(4));
-            */
         
-        // Get atlas textures from cache
         const atlasTextures = this.getAtlasTexturesForChunk(chunkX, chunkY, face);
         
-        // Store texture references (pointing to atlas textures)
         chunkData.textureRefs = {
             chunkX: chunkX,
             chunkY: chunkY,
@@ -195,7 +179,6 @@ export class WebGPUWorldGenerator extends BaseWorldGenerator {
         chunkData.heights = new Float32Array(size * size);
         chunkData.tiles = new Uint32Array(tileSize * tileSize);
         
-        // Fill with placeholder
         for (let i = 0; i < chunkData.heights.length; i++) {
             chunkData.heights[i] = 0;
         }
@@ -209,20 +192,11 @@ export class WebGPUWorldGenerator extends BaseWorldGenerator {
     }
 
     _populateChunkDataFromExtract(chunkData, chunkX, chunkY, heightData, tileData) {
-        // Height Data
         chunkData.heights = new Float32Array(heightData.length / 4);
         for (let i = 0; i < chunkData.heights.length; i++) {
             chunkData.heights[i] = heightData[i * 4];
         }
-        if (chunkX === 0 && chunkY === 0) {
-            let minH = Infinity, maxH = -Infinity;
-            for (const h of chunkData.heights) {
-              if (h < minH) minH = h;
-              if (h > maxH) maxH = h;
-            }
-            console.log('[WebGPUTerrainGenerator] Chunk (0,0) height range:', { minH, maxH, count: chunkData.heights.length });
-          }
-        // Tile Data
+
         const tileSize = this.chunkSize;
         chunkData.tiles = new Uint32Array(tileSize * tileSize);
         for (let i = 0; i < chunkData.tiles.length; i++) {
@@ -233,7 +207,6 @@ export class WebGPUWorldGenerator extends BaseWorldGenerator {
         chunkData.offsetX = chunkX * this.chunkSize;
         chunkData.offsetZ = chunkY * this.chunkSize;
         
-        // Generate feature distribution
         const terrainGen = this.modules.tiledTerrain.instance;
         if (terrainGen && terrainGen.generateFeatureDistributionForChunk) {
             chunkData.featureDistribution = terrainGen.generateFeatureDistributionForChunk(chunkX, chunkY, chunkData.tiles);
@@ -246,7 +219,6 @@ export class WebGPUWorldGenerator extends BaseWorldGenerator {
     async _setupLegacyTextures(chunkData, chunkX, chunkY) {
         chunkData.useAtlasMode = false;
         
-        // Use terrain generator directly
         if (this.modules.tiledTerrain.enabled && this.modules.tiledTerrain.instance) {
             await this.modules.tiledTerrain.instance.generateTerrain(chunkData, chunkX, chunkY);
         }

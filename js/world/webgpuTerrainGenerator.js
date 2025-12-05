@@ -23,6 +23,8 @@ export class WebGPUTerrainGenerator {
         this.ridgeScale = 0.02;
         this.plateauScale = 0.005;
         this.valleyScale = 0.012;
+        // Match the height scale used for tile selection/meshing so heights land in
+        // the expected 0..40 range (determineTerrain thresholds around 22)
         this.heightScale = 40.0;
 
         this.streamedTypes = new Map();
@@ -74,7 +76,7 @@ export class WebGPUTerrainGenerator {
                 { 
                     binding: 1, 
                     visibility: GPUShaderStage.COMPUTE, 
-                    storageTexture: { access: 'write-only', format: 'rgba16float', viewDimension: '2d' }
+                    storageTexture: { access: 'write-only', format: 'rgba32float', viewDimension: '2d' }
                 }
             ]
         });
@@ -91,7 +93,7 @@ export class WebGPUTerrainGenerator {
                 { 
                     binding: 3, 
                     visibility: GPUShaderStage.COMPUTE, 
-                    storageTexture: { access: 'write-only', format: 'rgba16float', viewDimension: '2d' }
+                    storageTexture: { access: 'write-only', format: 'rgba32float', viewDimension: '2d' }
                 }
             ]
         });
@@ -101,7 +103,7 @@ export class WebGPUTerrainGenerator {
         });
     }
 
-    createGPUTexture(width, height, format = 'rgba16float') {
+    createGPUTexture(width, height, format = 'rgba32float') {
         return this.device.createTexture({
             size: [width, height],
             format: format,
@@ -111,7 +113,8 @@ export class WebGPUTerrainGenerator {
 
     estimateAtlasMemory(config) {
         const textureSize = config.textureSize;
-        const heightNormalSize = textureSize + 1;
+        // Force height/normal atlas to exact atlas size for clean UVs
+        const heightNormalSize = textureSize;
         const tileSize = textureSize;
         const splatSize = textureSize * this.atlasSplatDensity;
         const bytesPerPixel = 16; 
@@ -124,7 +127,7 @@ export class WebGPUTerrainGenerator {
         if (!this.initialized) await this.initialize();
         
         const textureSize = config.textureSize;
-        const heightNormalSize = textureSize + 1;
+        const heightNormalSize = textureSize;
         const tileSize = textureSize;
         const splatSize = textureSize * this.atlasSplatDensity;
 
@@ -134,13 +137,16 @@ export class WebGPUTerrainGenerator {
         const atlasChunkX = atlasKey.atlasX * config.chunksPerAxis;
         const atlasChunkY = atlasKey.atlasY * config.chunksPerAxis;
         
+        //let textureFormat = 'rgba16float';
+        let textureFormat = 'rgba32float';
 
         // Use default (rgba16float) for these
-        const gpuHeight = this.createGPUTexture(heightNormalSize, heightNormalSize, 'rgba16float');
-        const gpuNormal = this.createGPUTexture(heightNormalSize, heightNormalSize, 'rgba16float');
-        const gpuTile = this.createGPUTexture(tileSize, tileSize, 'rgba16float');
-        const gpuMacro = this.createGPUTexture(splatSize, splatSize, 'rgba16float');
-        const gpuSplatData = this.createGPUTexture(splatSize, splatSize, 'rgba16float');
+        const gpuHeight = this.createGPUTexture(heightNormalSize, heightNormalSize, textureFormat);
+        
+        const gpuNormal = this.createGPUTexture(heightNormalSize, heightNormalSize, textureFormat);
+        const gpuTile = this.createGPUTexture(tileSize, tileSize, textureFormat);
+        const gpuMacro = this.createGPUTexture(splatSize, splatSize, textureFormat);
+        const gpuSplatData = this.createGPUTexture(splatSize, splatSize, textureFormat);
 
 
         await this.runTerrainPassAtlas(gpuHeight, atlasChunkX, atlasChunkY, face, 0, heightNormalSize, heightNormalSize, config.chunkSize);
@@ -152,19 +158,18 @@ export class WebGPUTerrainGenerator {
         await this.runSplatPassAtlas(gpuHeight, gpuTile, gpuSplatData, atlasChunkX, atlasChunkY, splatSize, splatSize, config.chunkSize);
         
         const textures = {
-            height: this.wrapGPUTexture(gpuHeight, heightNormalSize, heightNormalSize, 'rgba16float'),
-            normal: this.wrapGPUTexture(gpuNormal, heightNormalSize, heightNormalSize, 'rgba16float'),
-            tile: this.wrapGPUTexture(gpuTile, tileSize, tileSize, 'rgba16float'),
-            macro: this.wrapGPUTexture(gpuMacro, splatSize, splatSize, 'rgba16float'),
-            splatData: this.wrapGPUTexture(gpuSplatData, splatSize, splatSize, 'rgba16float')
+            height: this.wrapGPUTexture(gpuHeight, heightNormalSize, heightNormalSize, textureFormat),
+            normal: this.wrapGPUTexture(gpuNormal, heightNormalSize, heightNormalSize, textureFormat),
+            tile: this.wrapGPUTexture(gpuTile, tileSize, tileSize, textureFormat),
+            macro: this.wrapGPUTexture(gpuMacro, splatSize, splatSize, textureFormat),
+            splatData: this.wrapGPUTexture(gpuSplatData, splatSize, splatSize, textureFormat)
         };
-        
-        const bytesPerPixel16 = 8;
-        this.textureCache.set(atlasKey, null, 'height', textures.height, heightNormalSize * heightNormalSize * bytesPerPixel16);
-        this.textureCache.set(atlasKey, null, 'normal', textures.normal, heightNormalSize * heightNormalSize * bytesPerPixel16);
-        this.textureCache.set(atlasKey, null, 'tile', textures.tile, tileSize * tileSize * bytesPerPixel16);
-        this.textureCache.set(atlasKey, null, 'macro', textures.macro, splatSize * splatSize * bytesPerPixel16);
-        this.textureCache.set(atlasKey, null, 'splatData', textures.splatData, splatSize * splatSize * bytesPerPixel16);
+        const bytesPerPixel = 8;
+        this.textureCache.set(atlasKey, null, 'height', textures.height, heightNormalSize * heightNormalSize * bytesPerPixel);
+        this.textureCache.set(atlasKey, null, 'normal', textures.normal, heightNormalSize * heightNormalSize * bytesPerPixel);
+        this.textureCache.set(atlasKey, null, 'tile', textures.tile, tileSize * tileSize * bytesPerPixel);
+        this.textureCache.set(atlasKey, null, 'macro', textures.macro, splatSize * splatSize * bytesPerPixel);
+        this.textureCache.set(atlasKey, null, 'splatData', textures.splatData, splatSize * splatSize * bytesPerPixel);
         
         return {
             atlasKey: atlasKey,
@@ -258,9 +263,9 @@ export class WebGPUTerrainGenerator {
         if (!gpuHeightTex || !gpuTileTex) return null;
 
         try {
-             const heightData = await this.readTextureSubregion(
+            const heightData = await this.readTextureSubregion(
                 gpuHeightTex, localPos.localX * chunkSize, localPos.localY * chunkSize, 
-                chunkSize + 1, chunkSize + 1, config.textureSize + 1
+                chunkSize + 1, chunkSize + 1, config.textureSize
             );
             const tileData = await this.readTextureSubregion(
                 gpuTileTex, localPos.localX * chunkSize, localPos.localY * chunkSize, 
@@ -272,8 +277,8 @@ export class WebGPUTerrainGenerator {
     
     async readTextureSubregion(gpuTex, offsetX, offsetY, width, height, textureWidth) {
         const textureHeight = textureWidth; 
-        // RGBA16F = 8 bytes per pixel
-        const bytesPerRow = textureWidth * 8;
+        // RGBA32F = 16 bytes per pixel
+        const bytesPerRow = textureWidth * 16;
         const alignedBytesPerRow = Math.ceil(bytesPerRow / 256) * 256;
         const bufferSize = alignedBytesPerRow * textureHeight;
         
@@ -309,8 +314,8 @@ export class WebGPUTerrainGenerator {
         return subregion;
     }
 
-    wrapGPUTexture(gpuTex, w, h, formatOverride = 'rgba16float') {
-        const fmt = TextureFormat.RGBA16F;
+    wrapGPUTexture(gpuTex, w, h, formatOverride = 'rgba32float') {
+        const fmt = TextureFormat.RGBA32F;
         const t = new Texture({ 
             width: w, height: h, 
             format: fmt,

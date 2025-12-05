@@ -312,7 +312,6 @@ export class EnvironmentState {
                     // Winter: 40% snow, 30% stays clear, 15% rain, 15% foggy
                 } else {
                     const roll = this._rnd();
-                    // FIX: Was 90% foggy! Now much more balanced
                     newWeather = roll < 0.5 ? 'clear' : (roll < 0.75 ? 'rain' : 'foggy');
                     // Non-winter: 50% stays clear, 25% rain, 25% foggy
                 }

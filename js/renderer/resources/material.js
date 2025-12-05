@@ -26,7 +26,7 @@ export class Material {
         this._uniformLocations = null;
         this._needsCompile = true;
         
-        console.log(`📦 Material created: "${this.name}" (ID: ${this.id})`);
+        console.log(`Material created: "${this.name}" (ID: ${this.id})`);
     }
     
     static _nextId = 0;

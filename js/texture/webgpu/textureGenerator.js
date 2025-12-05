@@ -420,9 +420,6 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         view.setFloat32(64, 0.0, true);
         
         // offset 68: implicit padding (skip)
-        // ============================================
-        // FIX: Correct offsets for cellStretch and color
-        // ============================================
         const stretch = layer.cellStretch || [1.0, 1.0];
         view.setFloat32(72, stretch[0], true);  // cellStretch.x at 72
         view.setFloat32(76, stretch[1], true);  // cellStretch.y at 76
@@ -502,7 +499,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             const a = data[i * 4 + 3];
             samplePixels.push(`[${r},${g},${b},${a}]`);
         }
-        console.log(`🔍 WebGPU readback first 32 pixels:`, samplePixels.slice(0, 8).join(' '));
+        console.log('WebGPU readback first 32 pixels:', samplePixels.slice(0, 8).join(' '));
         console.log(`   Dimensions: ${this.width}x${this.height}, bytesPerRow: ${bytesPerRow} (padded from ${this.width * 4})`);
         
         const imageData = new ImageData(data, this.width, this.height);

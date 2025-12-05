@@ -4,46 +4,40 @@ export class SpaceshipParticles {
     constructor(particleSystem, spaceshipModel) {
         this.particleSystem = particleSystem;
         this.spaceshipModel = spaceshipModel;
-        
-    //    this.setupWingLights();
-        // NO ENGINE - removed setupEngineFlame()
-        
-        console.log('✓ Spaceship particles initialized (wing lights only)');
+
+        console.log('Spaceship particles initialized (wing lights only)');
     }
     
     setupWingLights() {
-        // Left wing - RED (navigation light - port side)
         this.leftWingEmitter = this.particleSystem.createEmitter('leftWing', {
             maxParticles: 1,
             geometry: 'quad',
             textureType: 'glow',
-            persistent: true, // NEW: Single persistent particle
+            persistent: true,
             billboard: true,
             stationary: true,
             
             size: { min: 1.0, max: 1.0 },
             
-            color: { r: 1.0, g: 0.0, b: 0.0 }, // RED
+            color: { r: 1.0, g: 0.0, b: 0.0 },
             
             alphaOverLifetime: (time) => {
-                // Use time directly for persistent particles
-                const pulse = Math.sin(time * 2.09) * 0.5 + 0.5; // 3-second cycle
+                const pulse = Math.sin(time * 2.09) * 0.5 + 0.5;
                 return 0.3 + pulse * 0.7;
             },
             
             blending: THREE.AdditiveBlending,
             
             light: {
-                color: new THREE.Color(1, 0, 0), // RED
-                intensity: 80, // Brighter
-                radius: 20,    // Larger radius
+                color: new THREE.Color(1, 0, 0),
+                intensity: 80,
+                radius: 20,
                 decay: 2,
                 pulse: true,
                 pulseSpeed: 2.09
             }
         });
         
-        // Right wing - GREEN (navigation light - starboard side)  
         this.rightWingEmitter = this.particleSystem.createEmitter('rightWing', {
             maxParticles: 1,
             geometry: 'quad',
@@ -64,7 +58,7 @@ export class SpaceshipParticles {
             blending: THREE.AdditiveBlending,
             
             light: {
-                color: new THREE.Color(0, 1, 0), // GREEN  
+                color: new THREE.Color(0, 1, 0),
                 intensity: 80,
                 radius: 20,
                 decay: 2,
@@ -78,8 +72,6 @@ export class SpaceshipParticles {
         const mesh = this.spaceshipModel.mesh;
         if (!mesh) return;
         return;
-        
-        // Update wing light positions
         const leftPos = new THREE.Vector3(-1.5, 0, -0.5);
         leftPos.applyMatrix4(mesh.matrixWorld);
         this.particleSystem.setEmitterPosition('leftWing', leftPos.x, leftPos.y, leftPos.z);

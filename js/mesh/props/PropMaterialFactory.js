@@ -14,9 +14,9 @@ import { buildTreeVertexShader } from '../../renderer/shaders/tree/treeVertexSha
 import { buildTreeFragmentShader } from '../../renderer/shaders/tree/treeFragmentShader.js';
 
 export class PropMaterialFactory {
-    constructor(textureManager, uniformManager, options = {}) {  // ADD uniformManager param
+    constructor(textureManager, uniformManager, options = {}) {
         this.textureManager = textureManager;
-        this.uniformManager = uniformManager;  // NEW
+        this.uniformManager = uniformManager;
         this.featureMaterialCache = new Map();
         this.dynamicMaterials = new WeakMap();
     }
@@ -46,35 +46,29 @@ export class PropMaterialFactory {
         }
         const bb = feature.boundingBox;
     
-        // Step 1: Grid/tile sizes, splat map sizes
         const gridWidth = bb.maxX - bb.minX + 1;
         const gridHeight = bb.maxY - bb.minY + 1;
         
-        // Since the mesh is inset by 1 on all sides, adjust tile counts
-        const numTilesX = gridWidth - 3;  // was gridWidth - 1
-        const numTilesY = gridHeight - 3; // was gridHeight - 1
+        const numTilesX = gridWidth - 3;
+        const numTilesY = gridHeight - 3;
         
-        // Adjust splat dimensions too
         const splatWidth = feature.blendWidth || numTilesX * (feature.splatDensity || 4);
         const splatHeight = feature.blendHeight || numTilesY * (feature.splatDensity || 4);
     
-        // Step 2: Build level1 and level2 textureData
         const bbox = feature.boundingBox;
-        // Adjust offset since mesh starts at local position (1,1)
         const offsetX = feature.chunkX * feature.chunkSize + bbox.minX + 1;
         const offsetZ = feature.chunkY * feature.chunkSize + bbox.minY + 1;
     
         const seasons = ['Spring', 'Summer', 'Autumn', 'Winter'];
         const textureData = {
             level1Data: TextureDataBuilder.buildLevel1Data(
-                feature, this.textureManager, offsetX, offsetZ, seasons, numTilesX, numTilesY, false, 1 // Add tileOffset = 1
+                feature, this.textureManager, offsetX, offsetZ, seasons, numTilesX, numTilesY, false, 1
             ),
             level2Data: TextureDataBuilder.buildLevel2Data(
                 feature, this.textureManager, offsetX, offsetZ, seasons, numTilesX, numTilesY
             )
         };
 
-        // Rest of the method remains the same...
         const splatMapData = TextureDataBuilder.buildSplatMap(
             feature, splatWidth, splatHeight
         );
@@ -95,7 +89,7 @@ export class PropMaterialFactory {
             splatMapData,
             macroMask,
             this.textureManager,
-            this.uniformManager  // NEW: pass uniform manager
+            this.uniformManager
         );
         if (material.uniforms.chunkWidth)  material.uniforms.chunkWidth.value  = numTilesX;
         if (material.uniforms.chunkHeight) material.uniforms.chunkHeight.value = numTilesY;
@@ -131,14 +125,12 @@ export class PropMaterialFactory {
         if (feature.type === 'tree') {
             const config = feature.treeConfig || this.getTreeConfig(feature.subtype);
             const atlasTex = this.textureManager.getAtlasTexture(TEXTURE_LEVELS.PROP);
-            console.log('Looking up leafTexture', atlasTex, 'in level PROP?', TEXTURE_LEVELS.PROP );
+            console.log('Looking up leafTexture', atlasTex, 'in level PROP?', TEXTURE_LEVELS.PROP);
             console.log([...this.textureManager.atlases.get(TEXTURE_LEVELS.PROP).textureMap.keys()]);
-                        // ✅ Force keys to be strings
-            const barkKey = config.barkTexture
-
-            const leafKey = config.leafTexture 
-  console.log('Looking up textures (keys):', barkKey, leafKey);
-  console.log('PROP atlas keys:', [...this.textureManager.atlases.get(TEXTURE_LEVELS.PROP).textureMap.keys()]);
+            const barkKey = config.barkTexture;
+            const leafKey = config.leafTexture;
+            console.log('Looking up textures (keys):', barkKey, leafKey);
+            console.log('PROP atlas keys:', [...this.textureManager.atlases.get(TEXTURE_LEVELS.PROP).textureMap.keys()]);
 
             if (!atlasTex) {
                 console.warn('No PROP atlas, using basic material');
@@ -160,7 +152,6 @@ export class PropMaterialFactory {
                 this.textureManager.calculateUVFromIndex(TEXTURE_LEVELS.PROP, leafIndex) :
                 {u1: 0.5, v1: 0, u2: 1, v2: 0.5};
     
-            // Material-specific uniforms
             const materialUniforms = {
                 map: { value: atlasTex },
                 barkUVRect: { value: new THREE.Vector4(barkUV.u1, barkUV.v1, barkUV.u2, barkUV.v2) },
@@ -222,7 +213,7 @@ export class PropMaterialFactory {
     
             return material;
         } else if (feature.type === 'grass') {
-            console.log(`🌱 Creating grass material for ${feature.subtype}, variant ${feature.variant}`);
+            console.log(`Creating grass material for ${feature.subtype}, variant ${feature.variant}`);
             const atlasTex = this.textureManager.getAtlasTexture(TEXTURE_LEVELS.PROP);
             
             if (!atlasTex) {
@@ -243,7 +234,7 @@ export class PropMaterialFactory {
             const diffuseIndex = this.textureManager.getTextureIndex(TEXTURE_LEVELS.PROP, diffuseKey);
             const billboardIndex = this.textureManager.getTextureIndex(TEXTURE_LEVELS.PROP, billboardKey);
             
-            console.log(`🌱 Grass texture lookup: ${diffuseKey} -> index ${diffuseIndex}, ${billboardKey} -> index ${billboardIndex}`);
+            console.log(`Grass texture lookup: ${diffuseKey} -> index ${diffuseIndex}, ${billboardKey} -> index ${billboardIndex}`);
             
             const diffuseUV = diffuseIndex >= 0 ?
                 this.textureManager.calculateUVFromIndex(TEXTURE_LEVELS.PROP, diffuseIndex) :
@@ -253,7 +244,6 @@ export class PropMaterialFactory {
                 this.textureManager.calculateUVFromIndex(TEXTURE_LEVELS.PROP, billboardIndex) :
                 {u1: 0.25, v1: 0, u2: 0.5, v2: 0.25};
             
-            // Material-specific uniforms
             const materialUniforms = {
                 map: { value: atlasTex },
                 grassUVRect: { value: new THREE.Vector4(diffuseUV.u1, diffuseUV.v1, diffuseUV.u2, diffuseUV.v2) },
@@ -307,9 +297,8 @@ export class PropMaterialFactory {
             
             return material;
         } else if (feature.type === 'shrub') {
-            console.log(`🌿 Creating shrub material for ${feature.subtype}, variant ${feature.variant}`);
+            console.log(`Creating shrub material for ${feature.subtype}, variant ${feature.variant}`);
             
-            // Use basic material for shrubs (can be enhanced later)
             const material = new THREE.MeshPhongMaterial({
                 color: feature.subtype === 'FERN' ? 0x2d5020 : 0x3a5a25,
                 transparent: true,
@@ -324,13 +313,12 @@ export class PropMaterialFactory {
         return null;
     }
     
-    // Create default height texture if none provided
-createDefaultTexture() {
-    const data = new Float32Array([0]);
-    const texture = new THREE.DataTexture(data, 1, 1, THREE.RedFormat, THREE.FloatType);
-    texture.needsUpdate = true;
-    return texture;
-}
+    createDefaultTexture() {
+        const data = new Float32Array([0]);
+        const texture = new THREE.DataTexture(data, 1, 1, THREE.RedFormat, THREE.FloatType);
+        texture.needsUpdate = true;
+        return texture;
+    }
     buildTerrainMaterial(feature, options = {}) {
         const { seasons = ['Spring', 'Summer', 'Autumn', 'Winter'], environmentState } = options;
 
@@ -343,5 +331,3 @@ createDefaultTexture() {
         this.featureMaterialCache.clear();
     }
 }
-
-

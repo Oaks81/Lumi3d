@@ -1,3 +1,4 @@
+// js/world/shaders/webgl2/splatCompute.glsl.js - FIXED
 
 import { TERRAIN_NOISE_GLSL } from './terrainNoise.glsl.js';
 
@@ -19,8 +20,7 @@ export const splatFragmentShader = `#version 300 es
 precision highp float;
 precision highp int;
 
-layout(location = 0) out vec4 o_blendWeights;
-layout(location = 1) out vec4 o_blendTypes;
+layout(location = 0) out vec4 o_splatData;
 
 in vec2 v_texCoord;
 
@@ -45,12 +45,15 @@ bool validTile(uint t) {
 }
 
 void main() {
-    vec2 chunkOrigin = vec2(float(u_chunkCoord.x * u_chunkSize),
-                            float(u_chunkCoord.y * u_chunkSize));
-
-    float splatRes = float(u_chunkSize * u_splatDensity);
-    vec2 splatPixel = v_texCoord * splatRes;
+    ivec2 tileMapSize = textureSize(u_tileMap, 0);
+    ivec2 outputSize = ivec2(tileMapSize.x * u_splatDensity, tileMapSize.y * u_splatDensity);
+    
+    vec2 splatPixel = v_texCoord * vec2(outputSize);
     vec2 tileCoord = splatPixel / float(u_splatDensity);
+    
+    // Check if using atlas (texture larger than chunk)
+    bool useAtlas = (tileMapSize.x > u_chunkSize || tileMapSize.y > u_chunkSize);
+    ivec2 chunkOriginTiles = (u_chunkCoord) * u_chunkSize;
 
     int N = max(1, u_kernelSize);
     int halfN = N / 2;
@@ -71,7 +74,16 @@ void main() {
             float dist = sqrt(float(dx * dx + dy * dy)) / float(halfN);
             float weight = exp(-2.0 * dist * dist);
 
-            uint t = uint(texture(u_tileMap, sampleUV).r * 255.0 + 0.5);
+            ivec2 sampleCoord;
+            if (useAtlas) {
+                sampleCoord = chunkOriginTiles + ivec2(clamp(sampleTile, vec2(0.0), vec2(float(u_chunkSize) - 1.0)));
+            } else {
+                sampleCoord = ivec2(sampleUV * vec2(tileMapSize));
+            }
+            sampleCoord = clamp(sampleCoord, ivec2(0), tileMapSize - ivec2(1));
+
+            vec4 tileSample = texelFetch(u_tileMap, sampleCoord, 0);
+            uint t = uint(tileSample.r * 255.0 + 0.5);
 
             if (t < 9u && validTile(t)) {
                 weightedCounts[t] += weight;
@@ -80,50 +92,39 @@ void main() {
         }
     }
 
-    uint bestTypes[4];
-    float bestWeights[4];
-    for (int i = 0; i < 4; i++) {
-        bestTypes[i] = 0u;
-        bestWeights[i] = 0.0;
-    }
+    // Find top 2 tile types
+    uint top1Type = 0u;
+    float top1Weight = 0.0;
+    uint top2Type = 0u;
+    float top2Weight = 0.0;
 
-    for (uint t = 1u; t <= 8u; t++) {
-        float w = weightedCounts[t];
-        if (w <= 0.0) continue;
-
-        for (int j = 0; j < 4; j++) {
-            if (w > bestWeights[j]) {
-                for (int k = 3; k > j; k--) {
-                    bestWeights[k] = bestWeights[k - 1];
-                    bestTypes[k] = bestTypes[k - 1];
-                }
-                bestWeights[j] = w;
-                bestTypes[j] = t;
-                break;
-            }
+    for (uint k = 0u; k < 9u; k++) {
+        float w = weightedCounts[k];
+        if (w > top1Weight) {
+            top2Type = top1Type;
+            top2Weight = top1Weight;
+            top1Type = k;
+            top1Weight = w;
+        } else if (w > top2Weight) {
+            top2Type = k;
+            top2Weight = w;
         }
     }
 
-    if (bestTypes[0] == 0u) {
-        bestTypes[0] = GRASS;
-        bestWeights[0] = 1.0;
+    // Normalize weights
+    float w1 = 0.0;
+    float w2 = 0.0;
+    if (totalWeight > 0.001) {
+        w1 = top1Weight / totalWeight;
+        w2 = top2Weight / totalWeight;
     }
 
-    vec4 weights = vec4(bestWeights[0], bestWeights[1], bestWeights[2], bestWeights[3]);
-    float sum = weights.r + weights.g + weights.b + weights.a;
-
-    if (sum > 0.0) {
-        weights /= sum;
-    } else {
-        weights = vec4(1.0, 0.0, 0.0, 0.0);
-    }
-
-    o_blendWeights = weights;
-    o_blendTypes = vec4(
-        float(bestTypes[0]) / 255.0,
-        float(bestTypes[1]) / 255.0,
-        float(bestTypes[2]) / 255.0,
-        float(bestTypes[3]) / 255.0
+    // Pack: [weight1, type1/255, weight2, type2/255]
+    o_splatData = vec4(
+        w1,
+        float(top1Type) / 255.0,
+        w2,
+        float(top2Type) / 255.0
     );
 }
 `;

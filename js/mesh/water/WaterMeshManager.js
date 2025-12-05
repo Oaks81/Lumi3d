@@ -1,4 +1,3 @@
-// WaterMeshManager.js
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.178.0/build/three.module.js';
 import { WaterMaterialFactory } from './WaterMaterialFactory.js';
 import { WaterGeometryGenerator } from './waterGeometryGenerator.js';
@@ -44,24 +43,19 @@ export class WaterMeshManager {
         }
         
         this.geometryInitialized = true;
-        console.log(`✓ Water shared geometries initialized (${this.chunkSize}×${this.chunkSize})`);
+        console.log(`Water shared geometries initialized (${this.chunkSize}x${this.chunkSize})`);
     }
-    // Synchronous water mesh creation
     createWaterMeshSync(feature, chunkKey, chunkData, globalSeaLevel, environmentState) {
-        // Skip if chunk is fully above water
         if (chunkData.isFullyAboveWater) return null;
         
-        // Ensure shared geometries are initialized
         this.initializeSharedGeometries();
         
-        // Setup feature properties
         feature.type = 'water';
         feature.chunkX = chunkData.chunkX;
         feature.chunkY = chunkData.chunkY;
         feature.waterLevel = globalSeaLevel;
         feature.chunkSize = chunkData.size;
         
-        // Get LOD level and use shared geometry
         const lodLevel = chunkData.lodLevel || 0;
         const geometry = this.sharedGeometries[Math.min(lodLevel, this.sharedGeometries.length - 1)];
         
@@ -70,14 +64,12 @@ export class WaterMeshManager {
             return null;
         }
         
-        // Get height texture for this chunk
         const heightTexture = this.terrainMeshManager.getHeightTexture(chunkData.chunkX, chunkData.chunkY);
         if (!heightTexture) {
             console.warn(`No height texture for water chunk ${chunkKey}`);
             return null;
         }
         
-        // ✅ FIXED: Use getMaterialForWater (original method)
         const material = this.materialFactory.getMaterialForWater(
             feature,
             heightTexture,
@@ -89,7 +81,6 @@ export class WaterMeshManager {
             return null;
         }
         
-        // Create mesh using shared geometry and per-chunk material
         const mesh = new THREE.Mesh(geometry, material);
         
         const chunkWorldX = chunkData.chunkX * chunkData.size;
@@ -112,7 +103,6 @@ export class WaterMeshManager {
         return mesh;
     }
 
-    // Keep async version for compatibility
     async loadWaterFeatures(chunkKey, waterFeatures, chunkData, environmentState) {
         return;
         if (!waterFeatures || waterFeatures.length === 0) return [];

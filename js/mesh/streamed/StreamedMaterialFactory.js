@@ -1,4 +1,3 @@
-// StreamedMaterialFactory.js
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.178.0/build/three.module.js';
 import { buildStreamedChunkVertexShader } from './buildStreamedChunkVertexShader.js';
 import { buildStreamedChunkFragmentShader } from './buildStreamedChunkFragmentShader.js';
@@ -49,12 +48,10 @@ export class StreamedMaterialFactory {
     
 /**
  * Create default uniforms for streaming shader
- * ✅ MATCHES YOUR VERTEX SHADER EXACTLY
  */
 createDefaultUniforms(config, chunkSize) {
     const instancesPerRow = Math.ceil(chunkSize / config.gridSpacing);
     
-    // ✅ Calculate distances from config
     const streamRadius = config.streamRadius || 100;
     const maxRenderDistance = config.maxRenderDistance || streamRadius * 0.9;
     const taperStartDistance = config.taperStartDistance || streamRadius * 0.5;
@@ -62,39 +59,31 @@ createDefaultUniforms(config, chunkSize) {
     const minCullDistance = config.minCullDistance || 2;
 
     return {
-        // Textures
         u_heightTexture: { value: null },
         u_normalTexture: { value: null },
         u_tileTypeTexture: { value: null },
         
-        // Chunk data
         u_chunkOffset: { value: new THREE.Vector2(0, 0) },
         u_chunkSize: { value: chunkSize },
         u_gridSpacing: { value: config.gridSpacing },
         u_instancesPerRow: { value: instancesPerRow },
         
-        // ✅ Distance culling (matches vertex shader)
         u_maxDistance: { value: maxRenderDistance },
         u_taperStartDistance: { value: taperStartDistance },
         u_taperEndDistance: { value: taperEndDistance },
         u_minCullDistance: { value: minCullDistance },
         
-        // Feature config
         u_density: { value: config.density || 0.8 },
         u_waterLevel: { value: 8.0 },
         u_cameraPosition: { value: new THREE.Vector3() },
         
-        // Wind animation
         u_time: { value: 0.0 },
         u_windStrength: { value: config.windStrength || 0.05 },
         
-        // LOD
         u_lodLevel: { value: 0 },
         
-        // Visual
         plantColor: { value: config.color || new THREE.Color(0.4, 0.7, 0.3) },
         
-        // Legacy
         u_numSeasons: { value: 4 },
         u_currentSeason: { value: 0 },
         windDirection: { value: new THREE.Vector2(1.0, 0.5).normalize() },
@@ -114,40 +103,33 @@ createChunkUniforms(config, typeName, chunkSize, windTime) {
     const minCullDistance = config.minCullDistance || 2;
     
     const uniforms = {
-        // Textures
         u_heightTexture: { value: null },
         u_tileTypeTexture: { value: null },
         
-        // Chunk data
         u_chunkOffset: { value: new THREE.Vector2(0, 0) },
         u_chunkSize: { value: chunkSize },
         u_gridSpacing: { value: config.gridSpacing },
         u_instancesPerRow: { value: instancesPerRow },
         
-        // Distance culling (matches vertex shader exactly)
         u_maxDistance: { value: maxRenderDistance },
         u_taperStartDistance: { value: taperStartDistance },
         u_taperEndDistance: { value: taperEndDistance },
         u_minCullDistance: { value: minCullDistance },
         
-        // Feature config
         u_density: { value: config.density || 0.8 },
         u_waterLevel: { value: 8.0 },
         u_cameraPosition: { value: new THREE.Vector3() },
         
-        // Wind animation
         u_time: { value: windTime },
         u_windStrength: { value: config.windStrength || 0.05 },
         
-        // LOD
         u_lodLevel: { value: 0 },
         
-        // ✅ Visual - ADD BOTH NAMES
         plantColor: { value: config.color || new THREE.Color(0.4, 0.7, 0.3) },
         u_color: { value: config.color || new THREE.Color(0.4, 0.7, 0.3) }
     };
     
-    console.log(`🔧 Created uniforms for ${typeName}: ${Object.keys(uniforms).length} total`);
+    console.log(`Created uniforms for ${typeName}: ${Object.keys(uniforms).length} total`);
     
     return uniforms;
 }
@@ -161,13 +143,11 @@ createChunkUniforms(config, typeName, chunkSize, windTime) {
  * @returns {THREE.ShaderMaterial} The created material
  */
 createChunkMaterial(config, typeName, baseMaterial, chunkSize, windTime) {
-    // ✅ Create custom uniforms FIRST
     const customUniforms = this.createChunkUniforms(config, typeName, chunkSize, windTime);
     
-    console.log(`🔍 Custom uniforms created: ${Object.keys(customUniforms).length}`);
-    console.log(`🔍   Has u_lod0TaperStart in customUniforms: ${!!customUniforms.u_lod0TaperStart}`);
+    console.log(`Custom uniforms created: ${Object.keys(customUniforms).length}`);
+    console.log(`   Has u_lod0TaperStart in customUniforms: ${!!customUniforms.u_lod0TaperStart}`);
     
-    // ✅ Create material with custom uniforms
     const material = new THREE.ShaderMaterial({
         uniforms: customUniforms,
         vertexShader: baseMaterial.vertexShader,
@@ -177,19 +157,17 @@ createChunkMaterial(config, typeName, baseMaterial, chunkSize, windTime) {
         alphaTest: baseMaterial.alphaTest
     });
     
-    console.log(`🔍 Material created with: ${Object.keys(material.uniforms).length} uniforms`);
-    console.log(`🔍   Has u_lod0TaperStart after material creation: ${!!material.uniforms.u_lod0TaperStart}`);
+    console.log(`Material created with: ${Object.keys(material.uniforms).length} uniforms`);
+    console.log(`   Has u_lod0TaperStart after material creation: ${!!material.uniforms.u_lod0TaperStart}`);
     
-    // ✅ Register AFTER (adds lighting uniforms without overwriting)
     if (this.uniformManager) {
         this.uniformManager.registerMaterial(material);
     }
     
-    console.log(`🔍 After registerMaterial: ${Object.keys(material.uniforms).length} uniforms`);
-    console.log(`🔍   Has u_lod0TaperStart after register: ${!!material.uniforms.u_lod0TaperStart}`);
+    console.log(`After registerMaterial: ${Object.keys(material.uniforms).length} uniforms`);
+    console.log(`   Has u_lod0TaperStart after register: ${!!material.uniforms.u_lod0TaperStart}`);
     
-    // ✅ Final verification
-    console.log(`🔍 Chunk material created for ${typeName}:`);
+    console.log(`Chunk material created for ${typeName}:`);
     console.log(`   Total uniforms: ${Object.keys(material.uniforms).length}`);
     console.log(`   Has u_cameraPosition: ${!!material.uniforms.u_cameraPosition}`);
     console.log(`   Has u_lod0TaperStart: ${!!material.uniforms.u_lod0TaperStart}`);

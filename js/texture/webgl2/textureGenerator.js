@@ -1,8 +1,6 @@
-// js/texture/textureGenerator.js
 import { TEXTURE_CONFIG } from "../atlasConfig.js";
 import { SEASONS } from "../TileConfig.js";
 
-// js/texture/GLContextPool.js
 export class GLContextPool {
     static _instance = null;
     static getInstance() {
@@ -26,7 +24,6 @@ export class GLContextPool {
       for (const ctx of this.pool) {
         if (!ctx.inUse) {
           ctx.inUse = true;
-          // CRITICAL: Resize canvas when reusing
           if (ctx.glCanvas.width !== width || ctx.glCanvas.height !== height) {
             ctx.glCanvas.width = width;
             ctx.glCanvas.height = height;
@@ -86,9 +83,8 @@ export function getAllProceduralVariantsForLevel(level) {
   for (const entry of TEXTURE_CONFIG) {
     if (!entry.textures?.base) continue;
 
-    // Figure out a readable tile ID for logs:
     const idType = typeof entry.id;
-    console.log(`• Entry id:`, entry.id, `(${idType})`);
+    console.log('Entry id:', entry.id, `(${idType})`);
 
     for (const season of Object.values(SEASONS)) {
       const seasonCfg = entry.textures.base[season];
@@ -97,16 +93,15 @@ export function getAllProceduralVariantsForLevel(level) {
       const layerSets = seasonCfg[level];
       for (let variantIdx = 0; variantIdx < layerSets.length; variantIdx++) {
         variants.push({
-          tileType: entry.id,            // numeric for terrain, string for trees
+          tileType: entry.id,
           season,
           variant: variantIdx,
           level,
           layers: layerSets[variantIdx],
         }); 
 
-        // Optional detailed debug per variant
         console.log(
-          `  → Added variant for`,
+          `  -> Added variant for`,
           entry.id,
           `season=${season} level=${level} index=${variantIdx}`
         );
@@ -198,22 +193,32 @@ export class ProceduralTextureGenerator {
     }
     
     generate() {
-      this.ctx.clearRect(0, 0, this.width, this.height);
-      this.ctx.fillStyle = 'black';
-    
-      if (this.gl) {
-        try {
-          this._generateGPUComposited();
-          return this.canvas;  // ✓ GPU success
-        } catch (err) {
-          console.warn('GPU generation failed, falling back to CPU. Error:', err);
-          // Fallthrough to return canvas anyway
-        }
+      // Ensure canvas has valid dimensions
+      if (this.canvas.width === 0 || this.canvas.height === 0) {
+          this.canvas.width = this.width;
+          this.canvas.height = this.height;
       }
       
-      // ✓ ALWAYS return the canvas (even if empty/black)
+      this.ctx.clearRect(0, 0, this.width, this.height);
+      this.ctx.fillStyle = 'black';
+      this.ctx.fillRect(0, 0, this.width, this.height); // Fill with black as base
+  
+      if (this.gl) {
+          try {
+              this._generateGPUComposited();
+              return this.canvas;
+          } catch (err) {
+              console.warn('GPU generation failed, falling back to CPU. Error:', err);
+          }
+      }
+      
+      // CPU fallback - process layers manually
+      for (const layer of this.layers) {
+          this._processLayerCPU(layer);
+      }
+  
       return this.canvas;
-    }
+  }
         _initGL() {
           try {
             // Don't get context again - we already have it from the pool!
@@ -743,13 +748,12 @@ void main() {
                     const tmpCtx = tmpCanvas.getContext('2d');
                     tmpCtx.drawImage(this.glCanvas, 0, 0, this.width, this.height);
                     
-                    // === DIAGNOSTIC: Sample pixels ===
                     const testData = tmpCtx.getImageData(0, 0, this.width, this.height).data;
                     const samplePixels = [];
                     for (let i = 0; i < 8; i++) {
                         samplePixels.push(`[${testData[i*4]},${testData[i*4+1]},${testData[i*4+2]},${testData[i*4+3]}]`);
                     }
-                    console.log(`🔍 WebGL2 canvas first 8 pixels:`, samplePixels.join(' '));
+                    console.log('WebGL2 canvas first 8 pixels:', samplePixels.join(' '));
                     
                     this._compositeLayerCanvas(tmpCanvas, layer);
                 }
@@ -774,8 +778,7 @@ void main() {
                     c.height = this.height;
                     const ctx = c.getContext('2d');
                     ctx.clearRect(0, 0, this.width, this.height);
-                    ctx.fillStyle = "rgba(0,0,0,0)"; // transparent background
-                    //ctx.fillRect(0, 0, this.width, this.height);
+                    ctx.fillStyle = "rgba(0,0,0,0)";
                   
                     const clusterCount = layer.clusterCount ?? 6;
                     const minScale = layer.minScale ?? 0.5;
@@ -995,7 +998,7 @@ const numDashes = Math.min(256, Math.floor(density * 100 * sizeScale));
                       case 'screen': return 'screen';
                       case 'overlay': return 'overlay';
                       case 'lighter': return 'lighter';
-                      case 'destination-in': return 'destination-in'; // <— ADD THIS
+                      case 'destination-in': return 'destination-in';
                       case 'source-in': return 'source-in';
                       default: return 'source-over';
                     }

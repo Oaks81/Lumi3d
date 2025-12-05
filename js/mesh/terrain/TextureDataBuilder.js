@@ -72,7 +72,7 @@ static buildLevel2Data(chunk, textureManager, offsetX, offsetZ, seasons, width, 
     const texture = this.createDataTexture(level2SeasonData, level2Width * numSeasons, level2Height, THREE.RGBAFormat, true);
     
     // DEBUG: Check texture
-    console.log(`📊 Level2 texture size: ${texture.image.width}x${texture.image.height}`);
+    console.log(`Level2 texture size: ${texture.image.width}x${texture.image.height}`);
 
     return {
         level2Width,
@@ -205,7 +205,7 @@ return {
         const lookupData = new Float32Array(width * height * 4);
     
         console.log(` Building ${level} lookup with seasons:`, seasons);
-        console.log(`   Width: ${width} (${numSeasons} seasons × ${maxVariants} variants)`);
+        console.log(`   Width: ${width} (${numSeasons} seasons x ${maxVariants} variants)`);
         console.log(`   Height: ${height} tile types`);
     
         let successCount = 0;
@@ -235,7 +235,7 @@ return {
                         successCount++;
                         
                         if (tileId === 3 && v === 0) {
-                            console.log(`    Season ${s} (${season}), v0: UVs (${uvs.u1.toFixed(3)}, ${uvs.v1.toFixed(3)}) → (${uvs.u2.toFixed(3)}, ${uvs.v2.toFixed(3)})`);
+                            console.log(`    Season ${s} (${season}), v0: UVs (${uvs.u1.toFixed(3)}, ${uvs.v1.toFixed(3)}) -> (${uvs.u2.toFixed(3)}, ${uvs.v2.toFixed(3)})`);
                         }
                     } else {
                         // Don't use fallback - use black/magenta to make it obvious
