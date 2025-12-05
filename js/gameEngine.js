@@ -202,7 +202,7 @@ export class GameEngine {
         this.inputManager = new GameInputManager(this.canvas);
         this.gameTime = new GameTime();
     
-        const useWebGPU = true;
+        const useWebGPU = false;
         const backendType = useWebGPU ? 'webgpu' : 'webgl2';
     
         this.renderer = new Frontend(this.canvas, {

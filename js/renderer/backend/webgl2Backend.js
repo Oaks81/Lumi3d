@@ -585,7 +585,7 @@ _setUniforms(material, additionalUniforms, program) {
 
     // Debug: Log texture uniforms
     const textureUniforms = ['heightTexture', 'normalTexture', 'tileTexture', 'atlasTexture'];
-    for (const name of textureUniforms) {
+   /* for (const name of textureUniforms) {
         const uniform = allUniforms[name];
         if (uniform) {
             const tex = uniform.value;
@@ -595,7 +595,7 @@ _setUniforms(material, additionalUniforms, program) {
                 size: tex ? `${tex.width}x${tex.height}` : 'N/A'
             });
         }
-    }
+    }*/
         for (const [name, uniform] of Object.entries(allUniforms)) {
             const location = program.uniformLocations[name];
             if (location == null) continue;

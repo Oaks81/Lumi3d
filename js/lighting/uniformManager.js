@@ -1,9 +1,10 @@
-
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.178.0/build/three.module.js';
 
 export class UniformManager {
     constructor() {
         this.uniforms = {
+            aerialPerspectiveEnabled: { value: 1.0 },
+            planetCenter: { value: new THREE.Vector3(0, 0, 0) },
             cameraPosition: { value: new THREE.Vector3() },
             cameraNear: { value: 0.1 },
             cameraFar: { value: 1000.0 },
@@ -45,11 +46,28 @@ export class UniformManager {
             shadowBias: { value: 0.001 },
             shadowNormalBias: { value: 0.1 },
             shadowMapSize: { value: 2048.0 },
-            receiveShadow: { value: 1.0 }
+            receiveShadow: { value: 1.0 },
+
+            atmospherePlanetRadius: { value: 50000 },
+            atmosphereRadius: { value: 55000 },
+            atmosphereScaleHeightRayleigh: { value: 800 },
+            atmosphereScaleHeightMie: { value: 120 },
+            atmosphereRayleighScattering: { value: new THREE.Vector3(5.5e-5, 13.0e-5, 22.4e-5) },
+            atmosphereMieScattering: { value: 21e-5 },
+            atmosphereOzoneAbsorption: { value: new THREE.Vector3(0.65e-6, 1.881e-6, 0.085e-6) },
+            atmosphereMieAnisotropy: { value: 0.8 },
+            atmosphereGroundAlbedo: { value: 0.3 },
+            atmosphereSunIntensity: { value: 20.0 },
+            viewerAltitude: { value: 0.0 },
+
+            transmittanceLUT: { value: null },
+            multiScatterLUT: { value: null },
+            skyViewLUT: { value: null }
         };
 
         this.materials = new Set();
         this.currentEnvironmentState = null;
+        this.currentPlanetConfig = null;
         this._dirtyUniforms = new Set();
         this._needsUpdate = false;
 
@@ -88,29 +106,124 @@ export class UniformManager {
                     camera.position.z || 0
                 );
             }
-        } 
-        
+        }
+
         if (camera.near !== undefined) {
             this.uniforms.cameraNear.value = camera.near;
         }
         if (camera.far !== undefined) {
             this.uniforms.cameraFar.value = camera.far;
         }
+
+        if (this.currentPlanetConfig) {
+            const altitude = this._calculateAltitude(this.uniforms.cameraPosition.value);
+            this.uniforms.viewerAltitude.value = altitude;
+        }
+    }
+
+    _calculateAltitude(cameraPos) {
+        if (!this.currentPlanetConfig) return 0;
+
+        const origin = this.currentPlanetConfig.origin;
+        const dx = cameraPos.x - origin.x;
+        const dy = cameraPos.y - origin.y;
+        const dz = cameraPos.z - origin.z;
+        const distanceFromCenter = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+        return Math.max(0, distanceFromCenter - this.currentPlanetConfig.radius);
+    }
+
+    updateFromPlanetConfig(planetConfig) {
+        if (!planetConfig) return;
+
+        this.currentPlanetConfig = planetConfig;
+
+        const atmo = planetConfig.atmosphereSettings;
+        if (!atmo) {
+            this.uniforms.atmospherePlanetRadius.value = planetConfig.radius;
+            this.uniforms.atmosphereRadius.value = planetConfig.radius + planetConfig.atmosphereHeight;
+            return;
+        }
+        this.uniforms.planetCenter.value.copy(planetConfig.origin);
+        this.uniforms.aerialPerspectiveEnabled.value = planetConfig.hasAtmosphere ? 1.0 : 0.0;
+        
+        this.uniforms.atmospherePlanetRadius.value = atmo.planetRadius;
+        this.uniforms.atmosphereRadius.value = atmo.atmosphereRadius;
+        this.uniforms.atmosphereScaleHeightRayleigh.value = atmo.scaleHeightRayleigh;
+        this.uniforms.atmosphereScaleHeightMie.value = atmo.scaleHeightMie;
+        this.uniforms.atmosphereRayleighScattering.value.copy(atmo.rayleighScattering);
+        this.uniforms.atmosphereMieScattering.value = atmo.mieScattering;
+        this.uniforms.atmosphereOzoneAbsorption.value.copy(atmo.ozoneAbsorption);
+        this.uniforms.atmosphereMieAnisotropy.value = atmo.mieAnisotropy;
+        this.uniforms.atmosphereGroundAlbedo.value = atmo.groundAlbedo;
+        this.uniforms.atmosphereSunIntensity.value = atmo.sunIntensity;
+
+        this._markUniformDirty('atmosphere');
+
+        console.log('[UniformManager] Atmosphere uniforms updated from PlanetConfig:', {
+            planetRadius: atmo.planetRadius,
+            atmosphereRadius: atmo.atmosphereRadius,
+            rayleighScattering: atmo.rayleighScattering.toArray(),
+            mieScattering: atmo.mieScattering
+        });
+    }
+
+    setAtmosphereLUTs(transmittance, multiScatter, skyView) {
+        if (transmittance) {
+            this.uniforms.transmittanceLUT.value = transmittance;
+            this._markUniformDirty('transmittanceLUT');
+        }
+        if (multiScatter) {
+            this.uniforms.multiScatterLUT.value = multiScatter;
+            this._markUniformDirty('multiScatterLUT');
+        }
+        if (skyView) {
+            this.uniforms.skyViewLUT.value = skyView;
+            this._markUniformDirty('skyViewLUT');
+        }
+    }
+
+    getAtmosphereUniformBuffer() {
+        const data = new Float32Array(16);
+
+        data[0] = this.uniforms.atmospherePlanetRadius.value;
+        data[1] = this.uniforms.atmosphereRadius.value;
+        data[2] = this.uniforms.atmosphereScaleHeightRayleigh.value;
+        data[3] = this.uniforms.atmosphereScaleHeightMie.value;
+
+        const rayleigh = this.uniforms.atmosphereRayleighScattering.value;
+        data[4] = rayleigh.x;
+        data[5] = rayleigh.y;
+        data[6] = rayleigh.z;
+        data[7] = this.uniforms.atmosphereMieScattering.value;
+
+        const ozone = this.uniforms.atmosphereOzoneAbsorption.value;
+        data[8] = ozone.x;
+        data[9] = ozone.y;
+        data[10] = ozone.z;
+        data[11] = this.uniforms.atmosphereMieAnisotropy.value;
+
+        data[12] = this.uniforms.atmosphereGroundAlbedo.value;
+        data[13] = this.uniforms.atmosphereSunIntensity.value;
+        data[14] = this.uniforms.viewerAltitude.value;
+        data[15] = 0.0;
+
+        return data;
     }
 
     updateFromEnvironmentState(environmentState) {
         if (!environmentState) return;
-        
+
         const u = this.uniforms;
 
         if (environmentState.sunLightColor) {
             u.sunLightColor.value.copy(environmentState.sunLightColor);
         }
-        
+
         if (environmentState.sunLightIntensity !== undefined) {
             u.sunLightIntensity.value = environmentState.sunLightIntensity;
         }
-        
+
         if (environmentState.sunLightDirection) {
             u.sunLightDirection.value.copy(environmentState.sunLightDirection);
         }
@@ -118,11 +231,11 @@ export class UniformManager {
         if (environmentState.moonLightColor) {
             u.moonLightColor.value.copy(environmentState.moonLightColor);
         }
-        
+
         if (environmentState.moonLightIntensity !== undefined) {
             u.moonLightIntensity.value = environmentState.moonLightIntensity;
         }
-        
+
         if (environmentState.moonLightDirection) {
             u.moonLightDirection.value.copy(environmentState.moonLightDirection);
         }
@@ -130,7 +243,7 @@ export class UniformManager {
         if (environmentState.ambientLightColor) {
             u.ambientLightColor.value.copy(environmentState.ambientLightColor);
         }
-        
+
         if (environmentState.ambientLightIntensity !== undefined) {
             u.ambientLightIntensity.value = environmentState.ambientLightIntensity;
         }
@@ -176,16 +289,16 @@ export class UniformManager {
 
     updateFromShadowRenderer(shadowData) {
         if (!shadowData) return;
-    
+
         if (shadowData.cascades) {
             this.uniforms.numCascades.value = shadowData.numCascades;
-    
+
             for (let i = 0; i < Math.min(3, shadowData.cascades.length); i++) {
                 const cascade = shadowData.cascades[i];
                 this.uniforms[`shadowMapCascade${i}`].value = cascade.renderTarget.texture;
                 this.uniforms[`shadowMatrixCascade${i}`].value.copy(cascade.shadowMatrix);
             }
-    
+
             if (shadowData.cascades.length >= 3) {
                 this.uniforms.cascadeSplits.value.set(
                     shadowData.cascades[0].split.far,
@@ -195,8 +308,7 @@ export class UniformManager {
             }
         }
     }
-    
-    // In updateFromClusteredLights method:
+
     updateFromClusteredLights(clusterGrid, clusteredLightManager, textures) {
         this.uniforms.clusterDimensions.value.copy(clusterGrid.clusterDimensions);
         this.uniforms.clusterDataTexture.value = textures.clusterData;
@@ -204,12 +316,9 @@ export class UniformManager {
         this.uniforms.lightIndicesTexture.value = textures.lightIndices;
         this.uniforms.numLights.value = clusteredLightManager.lights.length;
     }
-    
 
     updateFromLightManager(lightManager) {
     }
-
-
 
     getLightingUniforms() {
         return this.uniforms;
@@ -223,13 +332,13 @@ export class UniformManager {
 
     _markMaterialsForUpdate() {
         if (!this._needsUpdate) return;
-        
+
         for (const material of this.materials) {
             if (material.uniforms) {
                 material.uniformsNeedUpdate = true;
             }
         }
-        
+
         this._dirtyUniforms.clear();
         this._needsUpdate = false;
     }

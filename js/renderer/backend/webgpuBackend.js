@@ -78,6 +78,33 @@ export class WebGPUBackend extends Backend {
         console.log('WebGPUBackend initialized');
     }
 
+    _packAtmosphereUniforms(uniforms) {
+        const data = new Float32Array(16);
+    
+        data[0] = uniforms.atmospherePlanetRadius?.value ?? 50000;
+        data[1] = uniforms.atmosphereRadius?.value ?? 55000;
+        data[2] = uniforms.atmosphereScaleHeightRayleigh?.value ?? 800;
+        data[3] = uniforms.atmosphereScaleHeightMie?.value ?? 120;
+    
+        const rayleigh = uniforms.atmosphereRayleighScattering?.value;
+        data[4] = rayleigh?.x ?? 5.5e-5;
+        data[5] = rayleigh?.y ?? 13.0e-5;
+        data[6] = rayleigh?.z ?? 22.4e-5;
+        data[7] = uniforms.atmosphereMieScattering?.value ?? 21e-5;
+    
+        const ozone = uniforms.atmosphereOzoneAbsorption?.value;
+        data[8] = ozone?.x ?? 0.65e-6;
+        data[9] = ozone?.y ?? 1.881e-6;
+        data[10] = ozone?.z ?? 0.085e-6;
+        data[11] = uniforms.atmosphereMieAnisotropy?.value ?? 0.8;
+    
+        data[12] = uniforms.atmosphereGroundAlbedo?.value ?? 0.3;
+        data[13] = uniforms.atmosphereSunIntensity?.value ?? 20.0;
+        data[14] = uniforms.viewerAltitude?.value ?? 0.0;
+        data[15] = 0.0;
+    
+        return data;
+    }
     _createDepthTexture() {
         if (this._depthTexture) {
             this._depthTexture.destroy();
@@ -217,7 +244,113 @@ export class WebGPUBackend extends Backend {
         }
         texture._needsUpload = false;
     }
-
+    createStorageTexture(width, height, format) {
+        const gpuFormat = this._getTextureFormat({ format });
+        
+        const texture = this.device.createTexture({
+            size: [width, height],
+            format: gpuFormat,
+            usage: GPUTextureUsage.STORAGE_BINDING | 
+                   GPUTextureUsage.TEXTURE_BINDING | 
+                   GPUTextureUsage.COPY_SRC
+        });
+        
+        return {
+            texture: texture,
+            view: texture.createView(),
+            format: gpuFormat,
+            width: width,
+            height: height
+        };
+    }
+    
+    deleteStorageTexture(gpuTexture) {
+        if (gpuTexture && gpuTexture.texture) {
+            gpuTexture.texture.destroy();
+        }
+    }
+    
+    createComputePipeline(descriptor) {
+        const shaderModule = this.device.createShaderModule({
+            label: descriptor.label || 'Compute Shader',
+            code: descriptor.shaderSource
+        });
+        
+        const bindGroupLayoutEntries = descriptor.bindGroupLayouts[0].entries.map(entry => {
+            const layoutEntry = {
+                binding: entry.binding,
+                visibility: GPUShaderStage.COMPUTE
+            };
+            
+            if (entry.type === 'uniform') {
+                layoutEntry.buffer = { type: 'uniform' };
+            } else if (entry.type === 'storageTexture') {
+                layoutEntry.storageTexture = {
+                    access: entry.access === 'read' ? 'read-only' : 'write-only',
+                    format: entry.format,
+                    viewDimension: '2d'
+                };
+            } else if (entry.type === 'texture') {
+                layoutEntry.texture = { sampleType: 'float' };
+            } else if (entry.type === 'sampler') {
+                layoutEntry.sampler = { type: 'filtering' };
+            }
+            
+            return layoutEntry;
+        });
+        
+        const bindGroupLayout = this.device.createBindGroupLayout({
+            entries: bindGroupLayoutEntries
+        });
+        
+        const pipeline = this.device.createComputePipeline({
+            label: descriptor.label,
+            layout: this.device.createPipelineLayout({
+                bindGroupLayouts: [bindGroupLayout]
+            }),
+            compute: {
+                module: shaderModule,
+                entryPoint: 'main'
+            }
+        });
+        
+        return { pipeline, bindGroupLayout };
+    }
+    
+    createBindGroup(layout, entries) {
+        const bindGroupEntries = entries.map(entry => {
+            const bgEntry = { binding: entry.binding };
+            
+            if (entry.resource.gpuBuffer) {
+                bgEntry.resource = { buffer: entry.resource.gpuBuffer };
+            } else if (entry.resource.view) {
+                bgEntry.resource = entry.resource.view;
+            } else if (entry.resource.texture) {
+                bgEntry.resource = entry.resource.texture.createView();
+            } else {
+                bgEntry.resource = entry.resource;
+            }
+            
+            return bgEntry;
+        });
+        
+        return this.device.createBindGroup({
+            layout: layout,
+            entries: bindGroupEntries
+        });
+    }
+    
+    dispatchCompute(pipeline, bindGroup, workgroupsX, workgroupsY = 1, workgroupsZ = 1) {
+        const commandEncoder = this.device.createCommandEncoder();
+        const computePass = commandEncoder.beginComputePass();
+        
+        computePass.setPipeline(pipeline);
+        computePass.setBindGroup(0, bindGroup);
+        computePass.dispatchWorkgroups(workgroupsX, workgroupsY, workgroupsZ);
+        
+        computePass.end();
+        this.device.queue.submit([commandEncoder.finish()]);
+    }
     createBuffer(data, usage = 'static') {
         const isIndexBuffer = data instanceof Uint16Array || data instanceof Uint32Array;
         let gpuUsage = GPUBufferUsage.COPY_DST;
@@ -1041,6 +1174,7 @@ _describeLayouts(layouts) {
 
         // feature flag
         f32[32] = uniforms.isFeature?.value ?? 0;
+        f32[33] = uniforms.aerialPerspectiveEnabled?.value ?? 1.0;
 
         return f32;
     }

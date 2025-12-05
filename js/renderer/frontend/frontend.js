@@ -13,7 +13,7 @@ import { OrbitalSphereRenderer } from '../orbitalSphereRenderer.js';
 import { GenericMeshRenderer } from '../genericMeshRenderer.js';
 import { Geometry } from '../resources/geometry.js';
 import { Material } from '../resources/material.js';
-
+ 
 export class Frontend {
     constructor(canvas, options = {}) {
           
@@ -395,6 +395,28 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
         this.backend.setViewport(0, 0, this.canvas.width, this.canvas.height);
         this.genericMeshRenderer = new GenericMeshRenderer(this.backend);
         console.log('GenericMeshRenderer initialized');
+
+
+        if (this.planetConfig && this.planetConfig.hasAtmosphere) {
+            this.uniformManager.updateFromPlanetConfig(this.planetConfig);
+            const { AtmosphericScatteringLUT } = await import('../atmosphere/atmosphericScatteringLUT.js');
+            this.atmosphereLUT = await AtmosphericScatteringLUT.create(
+                this.backend,
+                this.uniformManager
+            );
+            this.atmosphereLUT.update();
+            console.log('AtmosphericScatteringLUT initialized');
+        }
+        if (this.atmosphereLUT) {
+            const { AerialPerspectiveTest } = await import('../atmosphere/aerialPerspectiveTest.js');
+            this.aerialTest = new AerialPerspectiveTest(
+                this.backend,
+                this.uniformManager,
+                this.atmosphereLUT
+            );
+            await this.aerialTest.initialize();
+        }
+
         this._setupInstancedDebug(); // Safe no-op if disabled
         this.clusterGrid = new ClusterGrid({
             gridSizeX: 16,
@@ -471,6 +493,10 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
         this.frameCount++;
     
         this.updateCamera(gameState);
+        if (this.planetConfig && this.uniformManager.currentPlanetConfig !== this.planetConfig) {
+            this.uniformManager.updateFromPlanetConfig(this.planetConfig);
+        }
+        
         await this.updateChunks(gameState, environmentState, deltaTime, planetConfig, sphericalMapper);
         this.updateLighting(environmentState);
     
@@ -494,7 +520,9 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
     
         this.renderTerrain();
         this.renderGenericMeshes();
-        
+        if (this.aerialTest) {
+            this.aerialTest.render();
+        }
         if (this.backendType === 'webgpu') {
             this.backend.submitCommands();
             
