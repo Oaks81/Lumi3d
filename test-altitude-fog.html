@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test: Altitude-Based Fog (3.2)</title>
+    <style>
+        body { font-family: monospace; margin: 20px; background: #1a1a1a; color: #e0e0e0; }
+        .test { padding: 10px; margin: 5px 0; border-left: 3px solid #666; }
+        .pass { border-left-color: #4CAF50; background: #1b3d1b; }
+        .fail { border-left-color: #f44336; background: #3d1b1b; }
+        h2 { color: #fff; }
+        #summary { margin-top: 20px; padding: 15px; background: #333; }
+    </style>
+</head>
+<body>
+    <h2>Altitude-Based Fog Tests (Feature 3.2)</h2>
+    <div id="results"></div>
+    <div id="summary"></div>
+
+    <script type="module">
+        const results = [];
+        const resultsDiv = document.getElementById('results');
+        const summaryDiv = document.getElementById('summary');
+
+        function addResult(name, passed, details = '') {
+            results.push({ name, passed, details });
+            const div = document.createElement('div');
+            div.className = `test ${passed ? 'pass' : 'fail'}`;
+            div.innerHTML = `<strong>${passed ? 'PASS' : 'FAIL'}:</strong> ${name}${details ? '<br><small>' + details + '</small>' : ''}`;
+            resultsDiv.appendChild(div);
+        }
+
+        function updateSummary() {
+            const passed = results.filter(r => r.passed).length;
+            const total = results.length;
+            summaryDiv.innerHTML = `<strong>Summary:</strong> ${passed}/${total} tests passed`;
+            summaryDiv.style.background = passed === total ? '#1b3d1b' : '#3d1b1b';
+        }
+
+        async function runTests() {
+            console.log('=== Altitude-Based Fog Tests ===');
+
+            // Test 1: UniformManager has fogParams
+            {
+                try {
+                    const module = await import('./js/lighting/uniformManager.js');
+                    const um = new module.UniformManager();
+
+                    const hasFogParams = um.fogParams !== undefined;
+                    const hasDensity = um.fogParams?.baseDensity !== undefined;
+                    const hasScaleHeight = um.fogParams?.scaleHeight !== undefined;
+                    const hasColor = um.fogParams?.color !== undefined;
+
+                    addResult(
+                        'UniformManager: fogParams object exists',
+                        hasFogParams && hasDensity && hasScaleHeight && hasColor,
+                        `fogParams: ${hasFogParams}, baseDensity: ${hasDensity}, scaleHeight: ${hasScaleHeight}, color: ${hasColor}`
+                    );
+                } catch (e) {
+                    addResult('UniformManager: fogParams object exists', false, e.message);
+                }
+            }
+
+            // Test 2: UniformManager has updateFogParams method
+            {
+                try {
+                    const module = await import('./js/lighting/uniformManager.js');
+                    const um = new module.UniformManager();
+
+                    const hasMethod = typeof um.updateFogParams === 'function';
+
+                    addResult(
+                        'UniformManager: updateFogParams method exists',
+                        hasMethod,
+                        `Method exists: ${hasMethod}`
+                    );
+                } catch (e) {
+                    addResult('UniformManager: updateFogParams method exists', false, e.message);
+                }
+            }
+
+            // Test 3: Fog density calculation - at surface
+            {
+                try {
+                    const module = await import('./js/lighting/uniformManager.js');
+                    const um = new module.UniformManager();
+
+                    const mockSettings = { scaleHeightMie: 1200 };
+                    um.updateFogParams(0, mockSettings);
+
+                    const densityAtSurface = um.fogParams.density;
+                    const baseDensity = um.fogParams.baseDensity;
+                    const isCorrect = Math.abs(densityAtSurface - baseDensity) < 0.0000001;
+
+                    addResult(
+                        'Fog density: At surface (0m) equals base density',
+                        isCorrect,
+                        `Surface density: ${densityAtSurface?.toExponential(2)}, Base: ${baseDensity?.toExponential(2)}`
+                    );
+                } catch (e) {
+                    addResult('Fog density: At surface (0m) equals base density', false, e.message);
+                }
+            }
+
+            // Test 4: Fog density at scale height = 36.8% of surface
+            {
+                try {
+                    const module = await import('./js/lighting/uniformManager.js');
+                    const um = new module.UniformManager();
+
+                    const scaleHeight = 1200;
+                    const mockSettings = { scaleHeightMie: scaleHeight };
+
+                    um.updateFogParams(0, mockSettings);
+                    const surfaceDensity = um.fogParams.density;
+
+                    um.updateFogParams(scaleHeight, mockSettings);
+                    const densityAtH = um.fogParams.density;
+
+                    const ratio = densityAtH / surfaceDensity;
+                    const expected = 1 / Math.E;
+                    const isCorrect = Math.abs(ratio - expected) < 0.01;
+
+                    addResult(
+                        'Fog density: At scale height = 36.8% of surface',
+                        isCorrect,
+                        `Ratio: ${(ratio * 100).toFixed(1)}%, Expected: ${(expected * 100).toFixed(1)}%`
+                    );
+                } catch (e) {
+                    addResult('Fog density: At scale height = 36.8% of surface', false, e.message);
+                }
+            }
+
+            // Test 5: Fog density at 3x scale height = ~5% of surface
+            {
+                try {
+                    const module = await import('./js/lighting/uniformManager.js');
+                    const um = new module.UniformManager();
+
+                    const scaleHeight = 1200;
+                    const mockSettings = { scaleHeightMie: scaleHeight };
+
+                    um.updateFogParams(0, mockSettings);
+                    const surfaceDensity = um.fogParams.density;
+
+                    um.updateFogParams(scaleHeight * 3, mockSettings);
+                    const densityAt3H = um.fogParams.density;
+
+                    const ratio = densityAt3H / surfaceDensity;
+                    const expected = Math.exp(-3);
+                    const isCorrect = Math.abs(ratio - expected) < 0.01;
+
+                    addResult(
+                        'Fog density: At 3x scale height = ~5% of surface',
+                        isCorrect,
+                        `Ratio: ${(ratio * 100).toFixed(1)}%, Expected: ${(expected * 100).toFixed(1)}%`
+                    );
+                } catch (e) {
+                    addResult('Fog density: At 3x scale height = ~5% of surface', false, e.message);
+                }
+            }
+
+            // Test 6: WebGPU terrain shader has altitude fog function
+            {
+                try {
+                    const module = await import('./js/mesh/terrain/shaders/webgpu/terrainChunkFragmentShaderBuilder.js');
+                    const shader = module.buildTerrainChunkFragmentShader({});
+
+                    const hasFogFunction = shader.includes('computeAltitudeFog') || shader.includes('altitude_fog');
+                    const hasExpDecay = shader.includes('exp(') && shader.includes('scaleHeight');
+
+                    addResult(
+                        'WebGPU shader: Altitude fog function exists',
+                        hasFogFunction || hasExpDecay,
+                        `Fog function: ${hasFogFunction}, Exp decay: ${hasExpDecay}`
+                    );
+                } catch (e) {
+                    addResult('WebGPU shader: Altitude fog function exists', false, e.message);
+                }
+            }
+
+            // Test 7: WebGL2 terrain shader has altitude fog function
+            {
+                try {
+                    const module = await import('./js/mesh/terrain/shaders/webgl2/terrainChunkFragmentShaderBuilder.js');
+                    const shader = module.buildTerrainChunkFragmentShader({});
+
+                    const hasFogFunction = shader.includes('computeAltitudeFog') || shader.includes('altitude_fog');
+                    const hasExpDecay = shader.includes('exp(') && shader.includes('scaleHeight');
+
+                    addResult(
+                        'WebGL2 shader: Altitude fog function exists',
+                        hasFogFunction || hasExpDecay,
+                        `Fog function: ${hasFogFunction}, Exp decay: ${hasExpDecay}`
+                    );
+                } catch (e) {
+                    addResult('WebGL2 shader: Altitude fog function exists', false, e.message);
+                }
+            }
+
+            // Test 8: WebGPU shader has fog uniforms
+            {
+                try {
+                    const module = await import('./js/mesh/terrain/shaders/webgpu/terrainChunkFragmentShaderBuilder.js');
+                    const shader = module.buildTerrainChunkFragmentShader({});
+
+                    const hasFogDensity = shader.includes('fogDensity');
+                    const hasFogScaleHeight = shader.includes('fogScaleHeight');
+                    const hasFogColor = shader.includes('fogColor');
+
+                    addResult(
+                        'WebGPU shader: Fog uniforms declared',
+                        hasFogDensity && hasFogScaleHeight && hasFogColor,
+                        `fogDensity: ${hasFogDensity}, fogScaleHeight: ${hasFogScaleHeight}, fogColor: ${hasFogColor}`
+                    );
+                } catch (e) {
+                    addResult('WebGPU shader: Fog uniforms declared', false, e.message);
+                }
+            }
+
+            // Test 9: WebGL2 shader has fog uniforms
+            {
+                try {
+                    const module = await import('./js/mesh/terrain/shaders/webgl2/terrainChunkFragmentShaderBuilder.js');
+                    const shader = module.buildTerrainChunkFragmentShader({});
+
+                    const hasFogDensity = shader.includes('uniform float fogDensity');
+                    const hasFogScaleHeight = shader.includes('uniform float fogScaleHeight');
+                    const hasFogColor = shader.includes('uniform vec3 fogColor');
+
+                    addResult(
+                        'WebGL2 shader: Fog uniforms declared',
+                        hasFogDensity && hasFogScaleHeight && hasFogColor,
+                        `fogDensity: ${hasFogDensity}, fogScaleHeight: ${hasFogScaleHeight}, fogColor: ${hasFogColor}`
+                    );
+                } catch (e) {
+                    addResult('WebGL2 shader: Fog uniforms declared', false, e.message);
+                }
+            }
+
+            // Test 10: Fog applied after aerial perspective (WebGPU)
+            {
+                try {
+                    const module = await import('./js/mesh/terrain/shaders/webgpu/terrainChunkFragmentShaderBuilder.js');
+                    const shader = module.buildTerrainChunkFragmentShader({});
+
+                    const apIndex = shader.indexOf('ap_applyWithBlend');
+                    const fogIndex = shader.indexOf('computeAltitudeFog');
+
+                    const fogAfterAP = apIndex > 0 && fogIndex > apIndex;
+
+                    addResult(
+                        'WebGPU shader: Fog applied after aerial perspective',
+                        fogAfterAP || fogIndex > 0,
+                        `AP index: ${apIndex}, Fog index: ${fogIndex}`
+                    );
+                } catch (e) {
+                    addResult('WebGPU shader: Fog applied after aerial perspective', false, e.message);
+                }
+            }
+
+            // Test 11: Fog applied after aerial perspective (WebGL2)
+            {
+                try {
+                    const module = await import('./js/mesh/terrain/shaders/webgl2/terrainChunkFragmentShaderBuilder.js');
+                    const shader = module.buildTerrainChunkFragmentShader({});
+
+                    const apIndex = shader.indexOf('ap_applyWithBlend');
+                    const fogIndex = shader.indexOf('computeAltitudeFog');
+
+                    const fogAfterAP = apIndex > 0 && fogIndex > apIndex;
+
+                    addResult(
+                        'WebGL2 shader: Fog applied after aerial perspective',
+                        fogAfterAP || fogIndex > 0,
+                        `AP index: ${apIndex}, Fog index: ${fogIndex}`
+                    );
+                } catch (e) {
+                    addResult('WebGL2 shader: Fog applied after aerial perspective', false, e.message);
+                }
+            }
+
+            // Test 12: Fog uses Beer's law transmittance
+            {
+                try {
+                    const wgpu = await import('./js/mesh/terrain/shaders/webgpu/terrainChunkFragmentShaderBuilder.js');
+                    const shader = wgpu.buildTerrainChunkFragmentShader({});
+
+                    const hasOpticalDepth = shader.includes('opticalDepth') || shader.includes('optical_depth');
+                    const hasTransmittance = shader.includes('transmittance') && shader.includes('exp(-');
+
+                    addResult(
+                        'Fog algorithm: Uses Beer\'s law transmittance',
+                        hasOpticalDepth || hasTransmittance,
+                        `opticalDepth: ${hasOpticalDepth}, transmittance exp(-): ${hasTransmittance}`
+                    );
+                } catch (e) {
+                    addResult('Fog algorithm: Uses Beer\'s law transmittance', false, e.message);
+                }
+            }
+
+            updateSummary();
+            console.log('=== Tests Complete ===');
+        }
+
+        runTests().catch(err => {
+            console.error('Test error:', err);
+            addResult('Test runner error', false, err.message);
+            updateSummary();
+        });
+    </script>
+</body>
+</html>

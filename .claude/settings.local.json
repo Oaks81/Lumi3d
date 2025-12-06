@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node --check:*)",
+      "Bash(curl:*)",
+      "Bash(npx:*)",
+      "Bash(cat:*)",
+      "Bash(node run-tests.mjs:*)",
+      "Bash(npm init:*)",
+      "Bash(npm install:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

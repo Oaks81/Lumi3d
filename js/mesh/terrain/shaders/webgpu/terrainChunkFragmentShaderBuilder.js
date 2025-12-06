@@ -1,49 +1,74 @@
-// js/mesh/terrain/shaders/webgpu/terrainChunkFragmentShaderBuilder.js
+
+import { getAerialPerspectiveWGSL } from '../../../../atmosphere/shaders/aerialPerspective.js';
+
 export function buildTerrainChunkFragmentShader(options = {}) {
     const maxLightIndices = options.maxLightIndices || 8192;
-    
+    const aerialPerspectiveCode = getAerialPerspectiveWGSL();
+
     return `
 // ============================================================================
-// DEBUG MODE: Change this value to visualize different data
-// 0 = Full rendering (normal mode)
-// 1 = Visualize normals (RGB = normal direction)
-// 2 = Visualize heights (VS height, FS height, corners)
-// 3 = Visualize tile IDs (color coded)
-// 4 = Visualize UVs (RG = UV coordinates)
-// 5 = Visualize sphere direction (RGB = sphereDir)
-// 6 = Visualize raw tile texture (no processing)
-// 7 = Visualize lookup texture (verify binding is correct)
-// 8 = Debug heights/displacement (R=VS height, G=displacement*0.01, B=useAtlasMode)
-// 9 = Show atlas UV params (R=offset.x, G=offset.y, B=scale)
-// 10 = Show raw tile texture sample (RGBA)
-// 11 = Solid debug color (pipeline sanity check)
-// 12 = Uniform sanity: R=chunkOffset.x/1024, G=chunkOffset.y/1024, B=atlasTextureSize/4096, A=useAtlasMode
-// 13 = Splat data: R=w0, G=id0/255, B=w1, A=id1/255
+// DEBUG MODE CONSTANTS
 // ============================================================================
-// Set to the mode you need (0 recommended to inspect uniforms)
 const DEBUG_MODE: i32 = 0;
+
+// ============================================================================
+// UNIFORM STRUCTURES
+// ============================================================================
 
 struct FragmentUniforms {
     cameraPosition: vec3<f32>,
     time: f32,
+
     chunkOffset: vec2<f32>,
     chunkWidth: f32,
     chunkHeight: f32,
+
     lightDirection: vec3<f32>,
+    _pad0: f32,
+
     lightColor: vec3<f32>,
+    _pad1: f32,
+
     ambientColor: vec3<f32>,
     enableSplatLayer: f32,
+
     enableMacroLayer: f32,
     geometryLOD: i32,
     currentSeason: i32,
     nextSeason: i32,
+
     seasonTransition: f32,
     atlasTextureSize: f32,
-    _padAtlas: f32,  
+    _padAtlas: f32,
+    _pad2: f32,
+
     atlasUVOffset: vec2<f32>,
     atlasUVScale: f32,
     useAtlasMode: i32,
+
     isFeature: f32,
+    aerialPerspectiveEnabled: f32,
+    _pad3: f32,
+    _pad4: f32,
+
+    planetCenter: vec3<f32>,
+    atmospherePlanetRadius: f32,
+
+    atmosphereRadius: f32,
+    atmosphereScaleHeightRayleigh: f32,
+    atmosphereScaleHeightMie: f32,
+    atmosphereMieAnisotropy: f32,
+
+    atmosphereRayleighScattering: vec3<f32>,
+    atmosphereMieScattering: f32,
+
+    atmosphereSunIntensity: f32,
+    fogDensity: f32,
+    fogScaleHeight: f32,
+    _pad5: f32,
+
+    fogColor: vec3<f32>,
+    _pad6: f32,
 }
 
 struct VertexOutput {
@@ -60,6 +85,10 @@ struct VertexOutput {
     @location(9) vDisplacement: f32,
 }
 
+// ============================================================================
+// BIND GROUPS
+// ============================================================================
+
 // Group 0: Uniform Buffers
 @group(0) @binding(1) var<uniform> fragUniforms: FragmentUniforms;
 
@@ -70,11 +99,7 @@ struct VertexOutput {
 @group(1) @binding(3) var splatDataMap: texture_2d<f32>;
 @group(1) @binding(4) var macroMaskTexture: texture_2d<f32>;
 
-// =============================================================================
-// Group 2: Atlas Textures & Lookups - FIXED to match backend binding order!
-// =============================================================================
-
-
+// Group 2: Atlas Textures & Lookups
 @group(2) @binding(0) var atlasTexture: texture_2d<f32>;
 @group(2) @binding(1) var level2AtlasTexture: texture_2d<f32>;
 @group(2) @binding(2) var tileTypeLookup: texture_2d<f32>;
@@ -82,12 +107,42 @@ struct VertexOutput {
 @group(2) @binding(4) var numVariantsTex: texture_2d<f32>;
 @group(2) @binding(5) var textureSampler: sampler;
 @group(2) @binding(6) var nearestSampler: sampler;
-// =============================================================================
-// Helper Functions
-// =============================================================================
+
+// Group 3: Shadows, Clusters, and Atmosphere
+@group(3) @binding(7) var transmittanceLUT: texture_2d<f32>;
+@group(3) @binding(8) var transmittanceSampler: sampler;
+
+// ============================================================================
+// AERIAL PERSPECTIVE FUNCTIONS
+// ============================================================================
+
+${aerialPerspectiveCode}
+
+// ============================================================================
+// ALTITUDE-BASED FOG
+// ============================================================================
+
+fn computeAltitudeFog(
+    color: vec3<f32>,
+    distance: f32,
+    viewerAltitude: f32,
+    targetAltitude: f32,
+    fogDensity: f32,
+    scaleHeight: f32,
+    fogColor: vec3<f32>
+) -> vec3<f32> {
+    let avgAltitude = (viewerAltitude + targetAltitude) * 0.5;
+    let density = fogDensity * exp(-avgAltitude / scaleHeight);
+    let opticalDepth = density * distance;
+    let transmittance = exp(-opticalDepth);
+    return mix(fogColor, color, transmittance);
+}
+
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
 
 fn sampleRGBA32FBilinear(tex: texture_2d<f32>, uv: vec2<f32>) -> vec4<f32> {
-    // Manual bilinear with textureLoad so RGBA32F (unfilterable) works
     let size = vec2<f32>(textureDimensions(tex));
     let coord = uv * size - 0.5;
     let base = floor(coord);
@@ -107,7 +162,6 @@ fn sampleRGBA32FNearest(tex: texture_2d<f32>, uv: vec2<f32>) -> vec4<f32> {
     return textureLoad(tex, clamp(coord, vec2<i32>(0), maxCoord), 0);
 }
 
-// Utility noise functions (for procedural masking)
 fn hash12(p: vec2<f32>) -> f32 {
     var p3 = fract(vec3<f32>(p.x, p.y, p.x) * 0.1031);
     p3 = p3 + dot(p3, p3.yzx + 33.33);
@@ -143,7 +197,6 @@ fn octaveNoise(p: vec2<f32>, octaves: i32) -> f32 {
     return v / norm;
 }
 
-// Apply per-chunk atlas transform when sampling data atlases
 fn applyChunkAtlasUV(uv: vec2<f32>, tex: texture_2d<f32>) -> vec2<f32> {
     if (fragUniforms.useAtlasMode == 0) {
         return uv;
@@ -155,7 +208,6 @@ fn applyChunkAtlasUV(uv: vec2<f32>, tex: texture_2d<f32>) -> vec2<f32> {
     return offset + clamp(uv, halfPix, vec2<f32>(1.0) - halfPix) * scale;
 }
 
-// SPHERICAL TBN MATRIX
 fn buildSphericalTBN(sphereDir: vec3<f32>) -> mat3x3<f32> {
     let up = normalize(sphereDir);
     var reference = vec3<f32>(0.0, 1.0, 0.0);
@@ -180,9 +232,8 @@ fn calculateNormal(input: VertexOutput) -> vec3<f32> {
 }
 
 fn lookupTileTypeUVs(tileId: f32, season: i32, variantIdx: i32) -> vec4<f32> {
-    // Layout: width = seasons * maxVariants, height = tileId
     let lookupSize = vec2<i32>(textureDimensions(tileTypeLookup));
-    let maxVariants = lookupSize.x / 4; // 4 seasons along X
+    let maxVariants = lookupSize.x / 4;
     let x = (season * maxVariants + (variantIdx % maxVariants)) % lookupSize.x;
     let y = i32(tileId) % lookupSize.y;
     return textureLoad(tileTypeLookup, vec2<i32>(x, y), 0);
@@ -323,7 +374,7 @@ fn sampleMicroTexture(input: VertexOutput, activeSeason: i32, ddx_vUv: vec2<f32>
     let atlasTileUV = applyChunkAtlasUV(clamp(tileUV, vec2<f32>(0.0), vec2<f32>(1.0)), tileTexture);
     let tileSample = sampleRGBA32FNearest(tileTexture, atlasTileUV);
     var tileId: f32;
-    if (tileSample.r > 1.0) { tileId = tileSample.r; } 
+    if (tileSample.r > 1.0) { tileId = tileSample.r; }
     else { tileId = tileSample.r * 255.0; }
     if (fragUniforms.isFeature < 0.5 && tileId >= 100.0) {
         return vec4<f32>(0.0, 0.0, 0.0, -1.0);
@@ -331,158 +382,64 @@ fn sampleMicroTexture(input: VertexOutput, activeSeason: i32, ddx_vUv: vec2<f32>
     let r = calculateRotation(worldTileCoord, tileId, activeSeason, 9547.0);
     let tileVariantIdx = pickTileVariant(worldTileCoord, tileId, activeSeason);
     let d = lookupTileTypeUVs(tileId, activeSeason, tileVariantIdx);
-    // d = (u1, v1, u2, v2). Convert to offset/scale for sampling.
     let uvOffset = d.xy;
     let uvScale = max(d.zw - d.xy, vec2<f32>(0.0005, 0.0005));
     let rotatedLocal = clamp(rotateUV(local, r), vec2<f32>(0.0), vec2<f32>(1.0));
     return sampleAtlasTextureGrad(uvOffset, uvScale, rotatedLocal, input.vUv, ddx_vUv, ddy_vUv);
 }
 
-fn debugTileIdColor(tileId: f32) -> vec3<f32> {
-    let id = i32(tileId + 0.5);
-    if (id == 0) { return vec3<f32>(0.0, 0.0, 0.0); }
-    if (id == 1) { return vec3<f32>(0.0, 0.0, 1.0); }
-    if (id == 2) { return vec3<f32>(0.9, 0.8, 0.5); }
-    if (id == 3) { return vec3<f32>(0.2, 0.7, 0.2); }
-    if (id == 4) { return vec3<f32>(0.4, 0.3, 0.2); }
-    if (id == 5) { return vec3<f32>(0.6, 0.6, 0.6); }
-    if (id == 6) { return vec3<f32>(0.1, 0.4, 0.1); }
-    if (id == 7) { return vec3<f32>(0.95, 0.95, 1.0); }
-    if (id == 8) { return vec3<f32>(0.5, 0.4, 0.3); }
-    if (id == 9) { return vec3<f32>(0.3, 0.3, 0.35); }
-    if (id == 10) { return vec3<f32>(0.6, 0.5, 0.3); }
-    let h = fract(sin(f32(id) * 12.9898) * 43758.5453);
-    return vec3<f32>(h, fract(h * 2.3), fract(h * 3.7));
-}
-
-// =============================================================================
-// Main Fragment Function
-// =============================================================================
+// ============================================================================
+// MAIN FRAGMENT FUNCTION
+// ============================================================================
 
 @fragment
 fn main(input: VertexOutput) -> @location(0) vec4<f32> {
     let activeSeason = select(fragUniforms.nextSeason, fragUniforms.currentSeason, fragUniforms.seasonTransition < 0.5);
 
-if (DEBUG_MODE == 1) {
-    let N = normalize(calculateNormal(input));
-
-    var normalColor = N * 0.5 + 0.5;
-
-    let lightDir = normalize(fragUniforms.lightDirection);
-    let NdotL = max(dot(N, lightDir), 0.0);
-
-    let skyColor = vec3<f32>(0.55, 0.65, 0.85);
-    let groundColor = vec3<f32>(0.2, 0.18, 0.16);
-    let hemi = mix(groundColor, skyColor, N.y * 0.5 + 0.5);
-
-    var shaded = normalColor * (0.25 + 0.75 * NdotL)
-               + hemi * 0.3;
-
-    shaded = pow(shaded, vec3<f32>(0.8));
-
-    return vec4<f32>(shaded, 1.0);
-}
-
-
-    
-    if (DEBUG_MODE == 2) {
-        // VS height (as sampled in vertex shader) vs FS samples
-        let hVS = input.vHeight;
-        let uv = applyChunkAtlasUV(input.vUv, heightTexture);
-        let hCenter = sampleRGBA32FBilinear(heightTexture, uv).r;
-        let h00 = textureLoad(heightTexture, vec2<i32>(0, 0), 0).r;
-        let h11 = textureLoad(heightTexture, vec2<i32>(1, 1), 0).r;
-        return vec4<f32>(hVS, hCenter, (h00 + h11) * 0.5, 1.0);
-    }
-    
-    // DEBUG 8: Show VS height, displacement, useAtlasMode
-    if (DEBUG_MODE == 8) {
-        let hVS = input.vHeight;
-        let disp = input.vDisplacement;
-        return vec4<f32>(hVS, disp * 0.01, f32(fragUniforms.useAtlasMode), 1.0);
-    }
-    
-    if (DEBUG_MODE == 9) {
-        // Hard test: ignore uniforms, output solid green
-        return vec4<f32>(0.0, 1.0, 0.0, 1.0);
-    }
-    
-    if (DEBUG_MODE == 10) {
-        let uv = applyChunkAtlasUV(input.vUv, tileTexture);
-        let tileSample = sampleRGBA32FBilinear(tileTexture, uv);
-        // Tint to make zeros visible
-        return vec4<f32>(tileSample.rgb + vec3<f32>(0.1, 0.05, 0.05), 1.0);
-    }
-    
-    // Simple pipeline sanity check (no texture access)
-    if (DEBUG_MODE == 11) {
-        return vec4<f32>(0.9, 0.1, 0.6, 1.0);
-    }
-    
-    // Uniform sanity check: pack a few fields directly
-    if (DEBUG_MODE == 12) {
-        let cx = clamp(fragUniforms.chunkOffset.x / 1024.0, 0.0, 1.0);
-        let cy = clamp(fragUniforms.chunkOffset.y / 1024.0, 0.0, 1.0);
-        let ats = clamp(fragUniforms.atlasTextureSize / 4096.0, 0.0, 1.0);
-        let useFlag = clamp(f32(fragUniforms.useAtlasMode), 0.0, 1.0);
-        return vec4<f32>(cx, cy, ats, useFlag);
-    }
-    
-    if (DEBUG_MODE == 3) {
-        let tCoord = input.vUv * vec2<f32>(fragUniforms.chunkWidth, fragUniforms.chunkHeight);
-        let tIdx = floor(tCoord);
-        let tileUV = (tIdx + 0.5) / vec2<f32>(fragUniforms.chunkWidth, fragUniforms.chunkHeight);
-        let atlasTileUV = applyChunkAtlasUV(clamp(tileUV, vec2<f32>(0.0), vec2<f32>(1.0)), tileTexture);
-        let tileSample = sampleRGBA32FNearest(tileTexture, atlasTileUV);
-        var tileId: f32;
-        if (tileSample.r > 1.0) { tileId = tileSample.r; }
-        else { tileId = tileSample.r * 255.0; }
-        return vec4<f32>(debugTileIdColor(tileId), 1.0);
-    }
-    
-    if (DEBUG_MODE == 4) {
-        return vec4<f32>(input.vUv.x, input.vUv.y, 0.0, 1.0);
-    }
-    
-    if (DEBUG_MODE == 5) {
-        return vec4<f32>(input.vSphereDir * 0.5 + 0.5, 1.0);
-    }
-    
-    if (DEBUG_MODE == 6) {
-        let uv = applyChunkAtlasUV(input.vUv, tileTexture);
-        let tileSample = sampleRGBA32FBilinear(tileTexture, uv);
-        return vec4<f32>(tileSample.rgb, 1.0);
-    }
-    
-    if (DEBUG_MODE == 7) {
-        let lookupSize = vec2<i32>(textureDimensions(tileTypeLookup));
-        let coord = vec2<i32>(clamp(input.vUv * vec2<f32>(lookupSize), vec2<f32>(0.0), vec2<f32>(lookupSize) - vec2<f32>(1.0)));
-        let lookupSample = textureLoad(tileTypeLookup, coord, 0);
-        return vec4<f32>(lookupSample.rgb * 10.0, 1.0);
-    }
-    
-    if (DEBUG_MODE == 13) {
-        let splatUV = applyChunkAtlasUV(input.vUv, splatDataMap);
-        let splatSample = sampleRGBA32FNearest(splatDataMap, splatUV);
-        return vec4<f32>(splatSample.r, splatSample.g, splatSample.b, splatSample.a);
+    // Debug modes
+    if (DEBUG_MODE == 1) {
+        let N = normalize(calculateNormal(input));
+        var normalColor = N * 0.5 + 0.5;
+        let lightDir = normalize(fragUniforms.lightDirection);
+        let NdotL = max(dot(N, lightDir), 0.0);
+        let skyColor = vec3<f32>(0.55, 0.65, 0.85);
+        let groundColor = vec3<f32>(0.2, 0.18, 0.16);
+        let hemi = mix(groundColor, skyColor, N.y * 0.5 + 0.5);
+        var shaded = normalColor * (0.25 + 0.75 * NdotL) + hemi * 0.3;
+        shaded = pow(shaded, vec3<f32>(0.8));
+        return vec4<f32>(shaded, 1.0);
     }
 
-    // NORMAL RENDERING
+    if (DEBUG_MODE == 20) {
+        let uv = ap_getTransmittanceUV(
+            input.vDistanceToCamera * 0.01,
+            0.5,
+            fragUniforms.atmospherePlanetRadius,
+            fragUniforms.atmosphereRadius
+        );
+        return vec4<f32>(uv.x, uv.y, 0.0, 1.0);
+    }
+
+    if (DEBUG_MODE == 21) {
+        let transmittance = textureSample(transmittanceLUT, transmittanceSampler, input.vUv).rgb;
+        return vec4<f32>(transmittance, 1.0);
+    }
+
     let chunkDims = vec2<f32>(fragUniforms.chunkWidth, fragUniforms.chunkHeight);
     let ddx_vUv = dpdx(input.vUv) * chunkDims;
     let ddy_vUv = dpdy(input.vUv) * chunkDims;
 
     let microSample = sampleMicroTexture(input, activeSeason, ddx_vUv, ddy_vUv);
-    
+
     if (microSample.a < 0.0) {
         discard;
     }
-    
+
     var baseColor = microSample.rgb;
-    // SPLAT LAYER (blend up to two dominant tiles)
+
+    // SPLAT LAYER
     if (fragUniforms.enableSplatLayer > 0.5 && fragUniforms.geometryLOD < 2) {
         let splatUV = applyChunkAtlasUV(input.vUv, splatDataMap);
-        // Use nearest sampling to avoid interpolating type IDs
         let splatSample = sampleRGBA32FNearest(splatDataMap, splatUV);
         let w0 = splatSample.r;
         let id0 = splatSample.g * 255.0;
@@ -502,8 +459,8 @@ if (DEBUG_MODE == 1) {
             baseColor = mix(baseColor, splatColor, clamp(totalW, 0.0, 1.0));
         }
     }
-    
-    // MACRO LAYER (level2 atlas) with procedural masking and ditch darkening
+
+    // MACRO LAYER
     if (fragUniforms.enableMacroLayer > 0.5 && fragUniforms.geometryLOD == 0) {
         var macroMaskUV = input.vUv;
         if (fragUniforms.useAtlasMode != 0) {
@@ -522,7 +479,6 @@ if (DEBUG_MODE == 1) {
             else { macroTileId = tileSample.r * 255.0; }
             if (macroTileId >= 100.0) { macroTileId = macroTileId - 100.0; }
 
-            // Procedural masking (noise-based breakup) in world space to stay continuous across chunks/faces
             let worldPosMeters = input.vWorldPosition.xz;
             let scaleMacro = 0.0008;
             let patchNoise = octaveNoise(worldPosMeters * scaleMacro, 4);
@@ -534,7 +490,6 @@ if (DEBUG_MODE == 1) {
 
             let macroCol = sampleMacroTileColor(macroTileId, worldTileCoord, local, activeSeason, input.vUv, ddx_vUv, ddy_vUv);
 
-            // Ditch darkening (stronger cues)
             let ditchScale = 1.0;
             let ditchRot = mat2x2<f32>(0.94, -0.34, 0.34, 0.94);
             let ditchDarken = 0.8;
@@ -543,19 +498,17 @@ if (DEBUG_MODE == 1) {
             let ditchMask = 1.0 - smoothstep(-ditchWidth, ditchWidth, ditchNoise);
             let luminanceMask = mix(1.0, ditchDarken, ditchMask);
 
-            // Fine noise to soften large-scale banding
             let fineScale = 0.012;
             let fineNoise = octaveNoise(worldPosMeters * fineScale, 2);
             let fineMask = smoothstep(0.3, 0.7, fineNoise);
 
-            // Macro dominance and blend
             let macroStrength = clamp(macroMask * procMask * 0.8, 0.0, 0.85);
             let macroMixed = mix(baseColor, macroCol.rgb * luminanceMask, macroStrength);
             baseColor = mix(macroMixed, baseColor, fineMask * 0.1);
         }
     }
 
-    // Micro crack / ditch detail to break long aligned lines (world-space high freq)
+    // Micro crack detail
     if (fragUniforms.geometryLOD < 3) {
         let crackPos = input.vWorldPosition.xz;
         let crackScale = 0.08;
@@ -564,16 +517,55 @@ if (DEBUG_MODE == 1) {
         let crackDarken = mix(1.0, 0.85, crackMask);
         baseColor *= crackDarken;
     }
+
+    // Lighting
     let worldNormal = calculateNormal(input);
     let lightDir = normalize(fragUniforms.lightDirection);
     let NdotL = max(dot(worldNormal, lightDir), 0.0);
     let ambient = fragUniforms.ambientColor * 0.35;
     let diffuse = fragUniforms.lightColor * NdotL * 0.9;
     var finalColor = baseColor * (ambient + diffuse);
-    let fogFactor = 1.0 - exp(-input.vDistanceToCamera * 0.00005);
-    let fogColor = vec3<f32>(0.6, 0.7, 0.8);
-    finalColor = mix(finalColor, fogColor, clamp(fogFactor, 0.0, 0.4));
-    
+
+    // ========================================================================
+    // AERIAL PERSPECTIVE
+    // ========================================================================
+    if (fragUniforms.aerialPerspectiveEnabled > 0.5) {
+        let apResult = ap_computeSimple(
+            transmittanceLUT,
+            transmittanceSampler,
+            input.vWorldPosition,
+            fragUniforms.cameraPosition,
+            lightDir,
+            fragUniforms.planetCenter,
+            fragUniforms.atmospherePlanetRadius,
+            fragUniforms.atmosphereRadius,
+            fragUniforms.atmosphereScaleHeightRayleigh,
+            fragUniforms.atmosphereScaleHeightMie,
+            fragUniforms.atmosphereRayleighScattering,
+            fragUniforms.atmosphereMieScattering,
+            fragUniforms.atmosphereMieAnisotropy,
+            fragUniforms.atmosphereSunIntensity
+        );
+
+        let apBlend = clamp(input.vDistanceToCamera / 50000.0, 0.0, 1.0);
+        finalColor = ap_applyWithBlend(finalColor, apResult, apBlend);
+    }
+
+    // ========================================================================
+    // ALTITUDE-BASED FOG (applied after aerial perspective)
+    // ========================================================================
+    let viewerAlt = length(fragUniforms.cameraPosition - fragUniforms.planetCenter) - fragUniforms.atmospherePlanetRadius;
+    let fragAlt = length(input.vWorldPosition - fragUniforms.planetCenter) - fragUniforms.atmospherePlanetRadius;
+    finalColor = computeAltitudeFog(
+        finalColor,
+        input.vDistanceToCamera,
+        max(0.0, viewerAlt),
+        max(0.0, fragAlt),
+        fragUniforms.fogDensity,
+        fragUniforms.fogScaleHeight,
+        fragUniforms.fogColor
+    );
+
     return vec4<f32>(finalColor, 1.0);
 }
 `;

@@ -32,7 +32,8 @@ export class UniformManager {
             playerLightPosition: { value: new THREE.Vector3() },
             playerLightDistance: { value: 15.0 },
             fogColor: { value: new THREE.Color(0xcccccc) },
-            fogDensity: { value: 0.005 },
+            fogDensity: { value: 0.00005 },
+            fogScaleHeight: { value: 1200 },
             weatherIntensity: { value: 0.0 },
             currentWeather: { value: 0 },
             shadowMapCascade0: { value: null },
@@ -70,6 +71,13 @@ export class UniformManager {
         this.currentPlanetConfig = null;
         this._dirtyUniforms = new Set();
         this._needsUpdate = false;
+
+        this.fogParams = {
+            baseDensity: 0.00005,
+            density: 0.00005,
+            scaleHeight: 1200,
+            color: { r: 0.7, g: 0.8, b: 1.0 }
+        };
 
         console.log('UniformManager initialized with', Object.keys(this.uniforms).length, 'uniforms');
     }
@@ -131,6 +139,20 @@ export class UniformManager {
         const distanceFromCenter = Math.sqrt(dx * dx + dy * dy + dz * dz);
 
         return Math.max(0, distanceFromCenter - this.currentPlanetConfig.radius);
+    }
+
+    updateFogParams(altitude, atmosphereSettings) {
+        const scaleHeight = atmosphereSettings?.scaleHeightMie || this.fogParams.scaleHeight;
+        this.fogParams.scaleHeight = scaleHeight;
+        this.fogParams.density = this.fogParams.baseDensity * Math.exp(-altitude / scaleHeight);
+
+        this.uniforms.fogDensity.value = this.fogParams.density;
+        this.uniforms.fogScaleHeight.value = this.fogParams.scaleHeight;
+        this.uniforms.fogColor.value.setRGB(
+            this.fogParams.color.r,
+            this.fogParams.color.g,
+            this.fogParams.color.b
+        );
     }
 
     updateFromPlanetConfig(planetConfig) {

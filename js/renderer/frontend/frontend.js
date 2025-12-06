@@ -319,6 +319,11 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
     
         await this.masterChunkLoader.initialize();
     
+    // Pass atmosphere LUT if available
+    if (this.atmosphereLUT && this.masterChunkLoader.terrainMeshManager) {
+        this.masterChunkLoader.terrainMeshManager.setAtmosphereLUT(this.atmosphereLUT);
+    }
+
         console.log('MasterChunkLoader initialized successfully');
     }
     
@@ -399,13 +404,27 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
 
         if (this.planetConfig && this.planetConfig.hasAtmosphere) {
             this.uniformManager.updateFromPlanetConfig(this.planetConfig);
+
+            const { PlanetAtmosphereSettings } = await import('../../planet/atmosphere/planetAtmosphereSettings.js');
+            this.atmosphereSettings = this.planetConfig.atmosphereSettings ||
+                PlanetAtmosphereSettings.createForPlanet(this.planetConfig.radius);
+
             const { AtmosphericScatteringLUT } = await import('../atmosphere/atmosphericScatteringLUT.js');
             this.atmosphereLUT = await AtmosphericScatteringLUT.create(
                 this.backend,
                 this.uniformManager
             );
             this.atmosphereLUT.update();
+            if (this.atmosphereLUT && this.masterChunkLoader?.terrainMeshManager) {
+                this.masterChunkLoader.terrainMeshManager.setAtmosphereLUT(this.atmosphereLUT);
+            }
+
             console.log('AtmosphericScatteringLUT initialized');
+            console.log('PlanetAtmosphereSettings initialized');
+
+            const { SkyRenderer } = await import('../../atmosphere/SkyRenderer.js');
+            this.skyRenderer = new SkyRenderer(this.backend, this.atmosphereLUT);
+            await this.skyRenderer.initialize();
         }
         if (this.atmosphereLUT) {
             const { AerialPerspectiveTest } = await import('../atmosphere/aerialPerspectiveTest.js');
@@ -484,12 +503,15 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
 
     async render(gameState, environmentState, deltaTime, planetConfig, sphericalMapper) {
         if (!this.textureManager?.loaded || !gameState.terrain) return;
-    
-        // Only use error scopes for WebGPU
+
+        if (this.atmosphereLUT && this.atmosphereSettings) {
+            await this.atmosphereLUT.compute(this.atmosphereSettings);
+        }
+
         if (this.backendType === 'webgpu' && this.backend.device) {
             this.backend.device.pushErrorScope('validation');
         }
-    
+
         this.frameCount++;
     
         this.updateCamera(gameState);
@@ -507,8 +529,18 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
         this.backend.setRenderTarget(null);
         this.backend.setClearColor(0.0, 0.0, 0.0, 1.0);
         this.backend.clear(true, true, false);
-    
-    
+
+        if (this.skyRenderer && this.atmosphereSettings) {
+            const sunDir = environmentState?.sunLightDirection ||
+                this.uniformManager.uniforms.sunLightDirection.value;
+            this.skyRenderer.render(
+                this.camera,
+                this.atmosphereSettings,
+                sunDir,
+                this.uniformManager
+            );
+        }
+
         if (this.orbitalSphereRenderer && gameState.altitudeZoneManager) {
             this.orbitalSphereRenderer.update(
                 this.camera,
@@ -521,7 +553,7 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
         this.renderTerrain();
         this.renderGenericMeshes();
         if (this.aerialTest) {
-            this.aerialTest.render();
+           // this.aerialTest.render();
         }
         if (this.backendType === 'webgpu') {
             this.backend.submitCommands();
@@ -645,9 +677,35 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
         this.backend.setViewport(0, 0, width, height);
     }
 
+    async switchPlanet(planetConfig) {
+        const { PlanetAtmosphereSettings } = await import(
+            '../../planet/atmosphere/planetAtmosphereSettings.js'
+        );
+        this.atmosphereSettings = PlanetAtmosphereSettings.createForPlanet(
+            planetConfig.radius,
+            planetConfig.atmosphereOptions || {}
+        );
+        if (this.atmosphereLUT) {
+            this.atmosphereLUT.invalidate();
+        }
+    }
+
+    async switchPlanetPreset(presetName) {
+        const { PlanetAtmosphereSettings } = await import(
+            '../../planet/atmosphere/planetAtmosphereSettings.js'
+        );
+        this.atmosphereSettings = PlanetAtmosphereSettings.createPreset(presetName);
+        if (this.atmosphereLUT) {
+            this.atmosphereLUT.invalidate();
+        }
+    }
+
     dispose() {
         if (this.genericMeshRenderer) {
             this.genericMeshRenderer.cleanup();
+        }
+        if (this.atmosphereLUT) {
+            this.atmosphereLUT.dispose();
         }
         this.masterChunkLoader.cleanupAll();
         this.lightManager.cleanup();

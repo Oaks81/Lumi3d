@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Transmittance LUT Test</title>
+    <style>
+        body {
+            font-family: monospace;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #00ff00;
+        }
+        #output {
+            white-space: pre-wrap;
+            background: #000;
+            padding: 20px;
+            border: 1px solid #00ff00;
+            border-radius: 5px;
+        }
+        .pass { color: #00ff00; }
+        .fail { color: #ff0000; }
+        .info { color: #00ffff; }
+    </style>
+</head>
+<body>
+    <h1>Transmittance LUT Resources Test</h1>
+    <div id="output">Initializing...</div>
+
+    <script type="module">
+        import { WebGL2Backend } from './js/renderer/backend/webgl2Backend.js';
+        import { WebGPUBackend } from './js/renderer/backend/webgpuBackend.js';
+        import { AtmosphericScatteringLUT } from
+            './js/atmosphere/AtmosphericScatteringLUT.js';
+        import { PlanetAtmosphereSettings } from
+            './js/planet/atmosphere/planetAtmosphereSettings.js';
+        import { TransmittanceLUTTest } from
+            './js/atmosphere/transmittanceLUTTest.js';
+
+        const output = document.getElementById('output');
+
+        function log(message, type = 'info') {
+            const div = document.createElement('div');
+            div.className = type;
+            div.textContent = message;
+            output.appendChild(div);
+        }
+
+        async function runTests() {
+            output.innerHTML = '';
+            log('Starting Transmittance LUT Test Suite...', 'info');
+            log('', 'info');
+
+            const canvas = document.createElement('canvas');
+            canvas.width = 800;
+            canvas.height = 600;
+
+            let backend;
+            let backendType;
+
+            try {
+                if (navigator.gpu) {
+                    log('Attempting WebGPU backend...', 'info');
+                    backend = new WebGPUBackend(canvas);
+                    await backend.initialize();
+                    backendType = 'WebGPU';
+                    log('WebGPU backend initialized', 'pass');
+                } else {
+                    throw new Error('WebGPU not available');
+                }
+            } catch (error) {
+                log('WebGPU failed, using WebGL2: ' + error.message, 'info');
+                backend = new WebGL2Backend(canvas);
+                await backend.initialize();
+                backendType = 'WebGL2';
+                log('WebGL2 backend initialized', 'pass');
+            }
+
+            log('', 'info');
+            log('Creating AtmosphericScatteringLUT...', 'info');
+            const atmosphereLUT = new AtmosphericScatteringLUT(backend);
+            await atmosphereLUT.initialize();
+
+            log('Creating PlanetAtmosphereSettings...', 'info');
+            const atmosphereSettings =
+                PlanetAtmosphereSettings.createForPlanet(6371000);
+
+            log('', 'info');
+            log(`Running tests with ${backendType} backend...`, 'info');
+            log('', 'info');
+
+            const test = new TransmittanceLUTTest();
+            const passed = await test.runAllTests(
+                backend,
+                atmosphereLUT,
+                atmosphereSettings
+            );
+
+            log('', 'info');
+            if (passed) {
+                log('ALL TESTS PASSED!', 'pass');
+            } else {
+                log('SOME TESTS FAILED!', 'fail');
+            }
+
+            log('', 'info');
+            log('Cleaning up...', 'info');
+            atmosphereLUT.dispose();
+            backend.dispose();
+            log('Test complete.', 'info');
+        }
+
+        console.log = function(...args) {
+            const message = args.join(' ');
+            if (message.includes('[PASS]')) {
+                log(message, 'pass');
+            } else if (message.includes('[FAIL]')) {
+                log(message, 'fail');
+            } else {
+                log(message, 'info');
+            }
+        };
+
+        console.error = function(...args) {
+            log(args.join(' '), 'fail');
+        };
+
+        runTests().catch(error => {
+            log('Fatal error: ' + error.message, 'fail');
+            log(error.stack, 'fail');
+        });
+    </script>
+</body>
+</html>

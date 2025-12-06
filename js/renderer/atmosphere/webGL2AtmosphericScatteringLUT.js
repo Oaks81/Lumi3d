@@ -119,6 +119,29 @@ void main() {
         });
         
         this.backend.compileShader(this._transmittanceMaterial);
+
+        const multiScatterFragmentShader = this._getEmbeddedMultiScatterShader();
+
+        this._multiScatterMaterial = new Material({
+            name: 'MultiScatterLUT_WebGL2',
+            vertexShader: vertexShader,
+            fragmentShader: multiScatterFragmentShader,
+            uniforms: {
+                uPlanetRadius: { value: 50000.0 },
+                uAtmosphereRadius: { value: 60000.0 },
+                uRayleighScattering: { value: [5.5e-5, 13.0e-5, 22.4e-5] },
+                uMieScattering: { value: 21e-5 },
+                uRayleighScaleHeight: { value: 800.0 },
+                uMieScaleHeight: { value: 120.0 },
+                uMieAnisotropy: { value: 0.758 },
+                uTransmittanceLUT: { value: this.transmittanceLUT }
+            },
+            depthTest: false,
+            depthWrite: false,
+            side: 'double'
+        });
+
+        this.backend.compileShader(this._multiScatterMaterial);
     }
     
     _getEmbeddedFragmentShader() {
@@ -201,7 +224,40 @@ void main() {
 }
 `;
     }
-    
+
+    _getEmbeddedMultiScatterShader() {
+        return `#version 300 es
+precision highp float;
+uniform float uPlanetRadius; uniform float uAtmosphereRadius;
+uniform vec3 uRayleighScattering; uniform float uMieScattering;
+uniform float uRayleighScaleHeight; uniform float uMieScaleHeight;
+uniform float uMieAnisotropy; uniform sampler2D uTransmittanceLUT;
+in vec2 vUv; out vec4 fragColor;
+const float PI=3.14159265359; const int ANGLE_SAMPLES=16;
+float rayleighPhase(float c){return(3.0/(16.0*PI))*(1.0+c*c);}
+float miePhase(float c,float g){float g2=g*g;return(1.0/(4.0*PI))*(1.0-g2)/pow(1.0+g2-2.0*g*c,1.5);}
+vec2 transmittanceUV(float alt,float cosTheta){
+  float H=sqrt(uAtmosphereRadius*uAtmosphereRadius-uPlanetRadius*uPlanetRadius);
+  float r=uPlanetRadius+alt; float rho=sqrt(max(0.0,r*r-uPlanetRadius*uPlanetRadius));
+  float u=rho/H; float dMin=uAtmosphereRadius-r; float dMax=rho+H;
+  float d=max(0.0,dMin+sqrt(max(0.0,r*r*(1.0-cosTheta*cosTheta))));
+  return vec2(clamp(u,0.0,1.0),clamp((d-dMin)/(dMax-dMin),0.0,1.0));
+}
+void main(){
+  float alt=vUv.y*(uAtmosphereRadius-uPlanetRadius); float cosSun=vUv.x*2.0-1.0;
+  float rDens=exp(-max(0.0,alt)/uRayleighScaleHeight);
+  float mDens=exp(-max(0.0,alt)/uMieScaleHeight);
+  vec3 rScat=uRayleighScattering*rDens; vec3 mScat=vec3(uMieScattering)*mDens;
+  vec3 sum=vec3(0.0);
+  for(int i=0;i<ANGLE_SAMPLES;i++){
+    float theta=(float(i)+0.5)/float(ANGLE_SAMPLES)*PI; float cosT=cos(theta);
+    vec3 trans=texture(uTransmittanceLUT,transmittanceUV(alt,cosT)).rgb;
+    sum+=trans*(rScat*rayleighPhase(cosSun)+mScat*miePhase(cosSun,uMieAnisotropy))*sin(theta);
+  }
+  fragColor=vec4(sum*(2.0*PI)/float(ANGLE_SAMPLES),1.0);
+}`;
+    }
+
     _generateTransmittanceLUT() {
         const uniforms = this.uniformManager.uniforms;
         const mat = this._transmittanceMaterial;
@@ -235,8 +291,42 @@ void main() {
         
         this.backend.setRenderTarget(null);
         this.backend.setViewport(prevViewport.x, prevViewport.y, prevViewport.width, prevViewport.height);
-        
+
         console.log('[WebGL2AtmosphericScatteringLUT] Transmittance LUT generated');
+
+        this._generateMultiScatterLUT();
+    }
+
+    _generateMultiScatterLUT() {
+        const uniforms = this.uniformManager.uniforms;
+        const mat = this._multiScatterMaterial;
+
+        mat.uniforms.uPlanetRadius.value = uniforms.atmospherePlanetRadius.value;
+        mat.uniforms.uAtmosphereRadius.value = uniforms.atmosphereRadius.value;
+
+        const rayleigh = uniforms.atmosphereRayleighScattering.value;
+        mat.uniforms.uRayleighScattering.value = [rayleigh.x, rayleigh.y, rayleigh.z];
+
+        mat.uniforms.uMieScattering.value = uniforms.atmosphereMieScattering.value;
+        mat.uniforms.uRayleighScaleHeight.value = uniforms.atmosphereScaleHeightRayleigh.value;
+        mat.uniforms.uMieScaleHeight.value = uniforms.atmosphereScaleHeightMie.value;
+        mat.uniforms.uMieAnisotropy.value = uniforms.atmosphereMieAnisotropy.value;
+        mat.uniforms.uTransmittanceLUT.value = this.transmittanceLUT;
+
+        const prevViewport = this._getCurrentViewport();
+
+        this.backend.setRenderTarget(this._multiScatterRT);
+        this.backend.setViewport(0, 0, this.multiScatterSize.width, this.multiScatterSize.height);
+        this.backend.setClearColor(0, 0, 0, 1);
+        this.backend.clear(true, false, false);
+
+        this.backend.draw(this._fullscreenQuad, this._multiScatterMaterial);
+
+        this.backend.setRenderTarget(null);
+        this.backend.setViewport(prevViewport.x, prevViewport.y, prevViewport.width, prevViewport.height);
+
+        console.log('[WebGL2AtmosphericScatteringLUT] Multi-scatter computation complete');
+        console.log('[WebGL2AtmosphericScatteringLUT] Multi-scattering LUT created: 32x32');
     }
     
     _getCurrentViewport() {

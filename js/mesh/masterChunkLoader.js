@@ -105,7 +105,9 @@ export class MasterChunkLoader {
             console.warn(`Large chunkDataCache size: ${this.chunkDataCache.size}`);
         }
     }
-
+    setAtmosphereLUT(lut) {
+        this.terrainMeshManager.setAtmosphereLUT(lut);
+    }
     queueChunkOperations(cameraPosition, terrain) {
 
         const visibleChunkKeys = new Set(terrain.keys());

@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test: Horizon Scattering (3.3)</title>
+    <style>
+        body { font-family: monospace; margin: 20px; background: #1a1a1a; color: #e0e0e0; }
+        .test { padding: 10px; margin: 5px 0; border-left: 3px solid #666; }
+        .pass { border-left-color: #4CAF50; background: #1b3d1b; }
+        .fail { border-left-color: #f44336; background: #3d1b1b; }
+        h2 { color: #fff; }
+        #summary { margin-top: 20px; padding: 15px; background: #333; }
+    </style>
+</head>
+<body>
+    <h2>Horizon Scattering Tests (Feature 3.3)</h2>
+    <div id="results"></div>
+    <div id="summary"></div>
+
+    <script type="module">
+        const results = [];
+        const resultsDiv = document.getElementById('results');
+        const summaryDiv = document.getElementById('summary');
+
+        function addResult(name, passed, details = '') {
+            results.push({ name, passed, details });
+            const div = document.createElement('div');
+            div.className = `test ${passed ? 'pass' : 'fail'}`;
+            div.innerHTML = `<strong>${passed ? 'PASS' : 'FAIL'}:</strong> ${name}${details ? '<br><small>' + details + '</small>' : ''}`;
+            resultsDiv.appendChild(div);
+        }
+
+        function updateSummary() {
+            const passed = results.filter(r => r.passed).length;
+            const total = results.length;
+            summaryDiv.innerHTML = `<strong>Summary:</strong> ${passed}/${total} tests passed`;
+            summaryDiv.style.background = passed === total ? '#1b3d1b' : '#3d1b1b';
+        }
+
+        async function runTests() {
+            console.log('=== Horizon Scattering Tests ===');
+
+            // Test 1: SkyRenderer class exists
+            {
+                try {
+                    const module = await import('./js/atmosphere/SkyRenderer.js');
+                    const hasClass = typeof module.SkyRenderer === 'function';
+
+                    addResult(
+                        'SkyRenderer: Class exists',
+                        hasClass,
+                        `SkyRenderer class: ${hasClass}`
+                    );
+                } catch (e) {
+                    addResult('SkyRenderer: Class exists', false, e.message);
+                }
+            }
+
+            // Test 2: SkyRenderer has initialize method
+            {
+                try {
+                    const module = await import('./js/atmosphere/SkyRenderer.js');
+                    const sr = new module.SkyRenderer({}, {});
+                    const hasInit = typeof sr.initialize === 'function';
+
+                    addResult(
+                        'SkyRenderer: Has initialize method',
+                        hasInit,
+                        `initialize: ${hasInit}`
+                    );
+                } catch (e) {
+                    addResult('SkyRenderer: Has initialize method', false, e.message);
+                }
+            }
+
+            // Test 3: SkyRenderer has render method
+            {
+                try {
+                    const module = await import('./js/atmosphere/SkyRenderer.js');
+                    const sr = new module.SkyRenderer({}, {});
+                    const hasRender = typeof sr.render === 'function';
+
+                    addResult(
+                        'SkyRenderer: Has render method',
+                        hasRender,
+                        `render: ${hasRender}`
+                    );
+                } catch (e) {
+                    addResult('SkyRenderer: Has render method', false, e.message);
+                }
+            }
+
+            // Test 4: Sky shader exists (check for shader content functions)
+            {
+                try {
+                    const module = await import('./js/atmosphere/SkyRenderer.js');
+                    const source = await fetch('./js/atmosphere/SkyRenderer.js').then(r => r.text());
+
+                    const hasRayMarch = source.includes('rayMarch') || source.includes('ray_march') || source.includes('marchStep');
+                    const hasPhase = source.includes('rayleighPhase') || source.includes('miePhase') || source.includes('phase');
+                    const hasInscatter = source.includes('inscatter') || source.includes('inScatter') || source.includes('scatter');
+
+                    addResult(
+                        'Sky shader: Contains ray marching logic',
+                        hasRayMarch || hasPhase || hasInscatter,
+                        `rayMarch: ${hasRayMarch}, phase: ${hasPhase}, inscatter: ${hasInscatter}`
+                    );
+                } catch (e) {
+                    addResult('Sky shader: Contains ray marching logic', false, e.message);
+                }
+            }
+
+            // Test 5: SkyRenderer has enabled property
+            {
+                try {
+                    const module = await import('./js/atmosphere/SkyRenderer.js');
+                    const sr = new module.SkyRenderer({}, {});
+                    const hasEnabled = sr.enabled !== undefined;
+
+                    addResult(
+                        'SkyRenderer: Has enabled property',
+                        hasEnabled,
+                        `enabled: ${hasEnabled}`
+                    );
+                } catch (e) {
+                    addResult('SkyRenderer: Has enabled property', false, e.message);
+                }
+            }
+
+            // Test 6: SkyRenderer has numSamples property
+            {
+                try {
+                    const module = await import('./js/atmosphere/SkyRenderer.js');
+                    const sr = new module.SkyRenderer({}, {});
+                    const hasNumSamples = sr.numSamples !== undefined;
+                    const reasonableDefault = sr.numSamples >= 8 && sr.numSamples <= 64;
+
+                    addResult(
+                        'SkyRenderer: Has numSamples property (8-64)',
+                        hasNumSamples && reasonableDefault,
+                        `numSamples: ${sr.numSamples}`
+                    );
+                } catch (e) {
+                    addResult('SkyRenderer: Has numSamples property (8-64)', false, e.message);
+                }
+            }
+
+            // Test 7: Ray-sphere intersection logic
+            {
+                try {
+                    const source = await fetch('./js/atmosphere/SkyRenderer.js').then(r => r.text());
+                    const hasRaySphere = source.includes('raySphere') || source.includes('ray_sphere') ||
+                                        source.includes('intersect') || source.includes('discriminant');
+
+                    addResult(
+                        'Sky shader: Has ray-sphere intersection',
+                        hasRaySphere,
+                        `Ray-sphere logic: ${hasRaySphere}`
+                    );
+                } catch (e) {
+                    addResult('Sky shader: Has ray-sphere intersection', false, e.message);
+                }
+            }
+
+            // Test 8: Transmittance LUT sampling
+            {
+                try {
+                    const source = await fetch('./js/atmosphere/SkyRenderer.js').then(r => r.text());
+                    const hasTransmittanceSample = source.includes('transmittanceLUT') || source.includes('transmittance_lut');
+
+                    addResult(
+                        'Sky shader: Samples transmittance LUT',
+                        hasTransmittanceSample,
+                        `Transmittance LUT: ${hasTransmittanceSample}`
+                    );
+                } catch (e) {
+                    addResult('Sky shader: Samples transmittance LUT', false, e.message);
+                }
+            }
+
+            // Test 9: Altitude fade logic
+            {
+                try {
+                    const source = await fetch('./js/atmosphere/SkyRenderer.js').then(r => r.text());
+                    const hasAltitudeFade = source.includes('smoothstep') &&
+                                           (source.includes('altitude') || source.includes('viewerAlt'));
+
+                    addResult(
+                        'Sky shader: Has altitude fade (smoothstep)',
+                        hasAltitudeFade,
+                        `Altitude fade: ${hasAltitudeFade}`
+                    );
+                } catch (e) {
+                    addResult('Sky shader: Has altitude fade (smoothstep)', false, e.message);
+                }
+            }
+
+            // Test 10: Fullscreen quad/triangle
+            {
+                try {
+                    const source = await fetch('./js/atmosphere/SkyRenderer.js').then(r => r.text());
+                    const hasFullscreen = source.includes('fullscreen') || source.includes('quad') ||
+                                         source.includes('triangle') || source.includes('-1.0') && source.includes('3.0');
+
+                    addResult(
+                        'SkyRenderer: Has fullscreen primitive',
+                        hasFullscreen,
+                        `Fullscreen primitive: ${hasFullscreen}`
+                    );
+                } catch (e) {
+                    addResult('SkyRenderer: Has fullscreen primitive', false, e.message);
+                }
+            }
+
+            // Test 11: Inverse view-projection matrix
+            {
+                try {
+                    const source = await fetch('./js/atmosphere/SkyRenderer.js').then(r => r.text());
+                    const hasInvViewProj = source.includes('invViewProj') || source.includes('inverse') ||
+                                          source.includes('viewProjectionInverse');
+
+                    addResult(
+                        'Sky shader: Uses inverse view-projection',
+                        hasInvViewProj,
+                        `Inverse VP: ${hasInvViewProj}`
+                    );
+                } catch (e) {
+                    addResult('Sky shader: Uses inverse view-projection', false, e.message);
+                }
+            }
+
+            // Test 12: Sun direction uniform
+            {
+                try {
+                    const source = await fetch('./js/atmosphere/SkyRenderer.js').then(r => r.text());
+                    const hasSunDir = source.includes('sunDir') || source.includes('sunDirection') ||
+                                     source.includes('lightDirection');
+
+                    addResult(
+                        'Sky shader: Has sun direction',
+                        hasSunDir,
+                        `Sun direction: ${hasSunDir}`
+                    );
+                } catch (e) {
+                    addResult('Sky shader: Has sun direction', false, e.message);
+                }
+            }
+
+            updateSummary();
+            console.log('=== Tests Complete ===');
+        }
+
+        runTests().catch(err => {
+            console.error('Test error:', err);
+            addResult('Test runner error', false, err.message);
+            updateSummary();
+        });
+    </script>
+</body>
+</html>

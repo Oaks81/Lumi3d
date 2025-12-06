@@ -78,7 +78,7 @@ vec3 computeTransmittance(float altitude, float cosTheta) {
     float r = uPlanetRadius + altitude;
     vec3 origin = vec3(0.0, r, 0.0);
     
-    float sinTheta = sqrt(max(0.0, 1.0 - cos Theta * cosTheta));
+    float sinTheta = sqrt(max(0.0, 1.0 - cosTheta * cosTheta));
     vec3 dir = vec3(sinTheta, cosTheta, 0.0);
     
     vec2 intersection = raySphereIntersect(origin, dir, uAtmosphereRadius);

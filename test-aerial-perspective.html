@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test: Aerial Perspective Integration (3.1)</title>
+    <style>
+        body { font-family: monospace; margin: 20px; background: #1a1a1a; color: #e0e0e0; }
+        .test { padding: 10px; margin: 5px 0; border-left: 3px solid #666; }
+        .pass { border-left-color: #4CAF50; background: #1b3d1b; }
+        .fail { border-left-color: #f44336; background: #3d1b1b; }
+        .pending { border-left-color: #ff9800; background: #3d3d1b; }
+        h2 { color: #fff; }
+        #summary { margin-top: 20px; padding: 15px; background: #333; }
+    </style>
+</head>
+<body>
+    <h2>Aerial Perspective Integration Tests (Feature 3.1)</h2>
+    <div id="results"></div>
+    <div id="summary"></div>
+
+    <script type="module">
+        import { AERIAL_PERSPECTIVE_WGSL, AERIAL_PERSPECTIVE_GLSL, getAerialPerspectiveWGSL, getAerialPerspectiveGLSL } from './js/renderer/atmosphere/shaders/aerialPerspectiveCommon.js';
+
+        const results = [];
+        const resultsDiv = document.getElementById('results');
+        const summaryDiv = document.getElementById('summary');
+
+        function addResult(name, passed, details = '') {
+            results.push({ name, passed, details });
+            const div = document.createElement('div');
+            div.className = `test ${passed ? 'pass' : 'fail'}`;
+            div.innerHTML = `<strong>${passed ? 'PASS' : 'FAIL'}:</strong> ${name}${details ? '<br><small>' + details + '</small>' : ''}`;
+            resultsDiv.appendChild(div);
+        }
+
+        function updateSummary() {
+            const passed = results.filter(r => r.passed).length;
+            const total = results.length;
+            summaryDiv.innerHTML = `<strong>Summary:</strong> ${passed}/${total} tests passed`;
+            summaryDiv.style.background = passed === total ? '#1b3d1b' : '#3d1b1b';
+        }
+
+        async function runTests() {
+            console.log('=== Aerial Perspective Integration Tests ===');
+
+            // Test 1: WGSL aerial perspective code exists
+            {
+                const wgsl = getAerialPerspectiveWGSL();
+                const hasRayleighPhase = wgsl.includes('ap_rayleighPhase');
+                const hasMiePhase = wgsl.includes('ap_miePhase');
+                const hasTransmittanceUV = wgsl.includes('ap_getTransmittanceUV');
+                const hasComputeSimple = wgsl.includes('ap_computeSimple');
+                const hasApply = wgsl.includes('ap_applyWithBlend');
+
+                const allPresent = hasRayleighPhase && hasMiePhase && hasTransmittanceUV && hasComputeSimple && hasApply;
+                addResult(
+                    'WGSL: All aerial perspective functions present',
+                    allPresent,
+                    `rayleighPhase: ${hasRayleighPhase}, miePhase: ${hasMiePhase}, transmittanceUV: ${hasTransmittanceUV}, computeSimple: ${hasComputeSimple}, apply: ${hasApply}`
+                );
+            }
+
+            // Test 2: GLSL aerial perspective code exists
+            {
+                const glsl = getAerialPerspectiveGLSL();
+                const hasRayleighPhase = glsl.includes('ap_rayleighPhase');
+                const hasMiePhase = glsl.includes('ap_miePhase');
+                const hasTransmittanceUV = glsl.includes('ap_getTransmittanceUV');
+                const hasComputeSimple = glsl.includes('ap_computeSimple');
+                const hasApply = glsl.includes('ap_applyWithBlend');
+
+                const allPresent = hasRayleighPhase && hasMiePhase && hasTransmittanceUV && hasComputeSimple && hasApply;
+                addResult(
+                    'GLSL: All aerial perspective functions present',
+                    allPresent,
+                    `rayleighPhase: ${hasRayleighPhase}, miePhase: ${hasMiePhase}, transmittanceUV: ${hasTransmittanceUV}, computeSimple: ${hasComputeSimple}, apply: ${hasApply}`
+                );
+            }
+
+            // Test 3: WGSL has struct definition
+            {
+                const wgsl = getAerialPerspectiveWGSL();
+                const hasStruct = wgsl.includes('struct AerialPerspectiveResult');
+                const hasTransmittance = wgsl.includes('transmittance: vec3<f32>');
+                const hasInscatter = wgsl.includes('inscatter: vec3<f32>');
+
+                addResult(
+                    'WGSL: AerialPerspectiveResult struct defined correctly',
+                    hasStruct && hasTransmittance && hasInscatter,
+                    `struct: ${hasStruct}, transmittance: ${hasTransmittance}, inscatter: ${hasInscatter}`
+                );
+            }
+
+            // Test 4: GLSL has struct definition
+            {
+                const glsl = getAerialPerspectiveGLSL();
+                const hasStruct = glsl.includes('struct AerialPerspectiveResult');
+                const hasTransmittance = glsl.includes('vec3 transmittance');
+                const hasInscatter = glsl.includes('vec3 inscatter');
+
+                addResult(
+                    'GLSL: AerialPerspectiveResult struct defined correctly',
+                    hasStruct && hasTransmittance && hasInscatter,
+                    `struct: ${hasStruct}, transmittance: ${hasTransmittance}, inscatter: ${hasInscatter}`
+                );
+            }
+
+            // Test 5: WebGPU terrain shader imports aerial perspective
+            {
+                try {
+                    const module = await import('./js/mesh/terrain/shaders/webgpu/terrainChunkFragmentShaderBuilder.js');
+                    const shader = module.buildTerrainChunkFragmentShader({});
+
+                    const hasAPCall = shader.includes('ap_computeSimple');
+                    const hasAPApply = shader.includes('ap_applyWithBlend');
+                    const hasAPEnabled = shader.includes('aerialPerspectiveEnabled');
+
+                    addResult(
+                        'WebGPU terrain shader: Aerial perspective integrated',
+                        hasAPCall && hasAPApply && hasAPEnabled,
+                        `computeSimple: ${hasAPCall}, applyWithBlend: ${hasAPApply}, enabled flag: ${hasAPEnabled}`
+                    );
+                } catch (e) {
+                    addResult('WebGPU terrain shader: Aerial perspective integrated', false, e.message);
+                }
+            }
+
+            // Test 6: WebGL2 terrain shader has aerial perspective
+            {
+                try {
+                    const module = await import('./js/mesh/terrain/shaders/webgl2/terrainChunkFragmentShaderBuilder.js');
+                    const shader = module.buildTerrainChunkFragmentShader({});
+
+                    const hasAPCall = shader.includes('ap_computeSimple');
+                    const hasAPApply = shader.includes('ap_applyWithBlend');
+                    const hasTransmittanceLUT = shader.includes('transmittanceLUT');
+
+                    addResult(
+                        'WebGL2 terrain shader: Aerial perspective integrated',
+                        hasAPCall && hasAPApply && hasTransmittanceLUT,
+                        `computeSimple: ${hasAPCall}, applyWithBlend: ${hasAPApply}, transmittanceLUT: ${hasTransmittanceLUT}`
+                    );
+                } catch (e) {
+                    addResult('WebGL2 terrain shader: Aerial perspective integrated', false, e.message);
+                }
+            }
+
+            // Test 7: UniformManager has atmospheric uniforms
+            {
+                try {
+                    const module = await import('./js/lighting/uniformManager.js');
+                    const um = new module.UniformManager();
+
+                    const hasRadius = um.uniforms.atmospherePlanetRadius !== undefined;
+                    const hasAtmoRadius = um.uniforms.atmosphereRadius !== undefined;
+                    const hasRayleigh = um.uniforms.atmosphereRayleighScattering !== undefined;
+                    const hasMie = um.uniforms.atmosphereMieScattering !== undefined;
+                    const hasTransmittanceLUT = um.uniforms.transmittanceLUT !== undefined;
+                    const hasAerialEnabled = um.uniforms.aerialPerspectiveEnabled !== undefined;
+
+                    const allPresent = hasRadius && hasAtmoRadius && hasRayleigh && hasMie && hasTransmittanceLUT && hasAerialEnabled;
+                    addResult(
+                        'UniformManager: Atmospheric uniforms present',
+                        allPresent,
+                        `planetRadius: ${hasRadius}, atmosphereRadius: ${hasAtmoRadius}, rayleigh: ${hasRayleigh}, mie: ${hasMie}, transmittanceLUT: ${hasTransmittanceLUT}, aerialEnabled: ${hasAerialEnabled}`
+                    );
+                } catch (e) {
+                    addResult('UniformManager: Atmospheric uniforms present', false, e.message);
+                }
+            }
+
+            // Test 8: TerrainMaterialBuilder passes transmittanceLUT
+            {
+                try {
+                    const module = await import('./js/mesh/terrain/terrainMaterialBuilder.js');
+                    const source = await fetch('./js/mesh/terrain/terrainMaterialBuilder.js').then(r => r.text());
+
+                    const hasTransmittanceLUT = source.includes('transmittanceLUT');
+                    const hasAerialEnabled = source.includes('aerialPerspectiveEnabled');
+                    const hasPlanetCenter = source.includes('planetCenter');
+
+                    addResult(
+                        'TerrainMaterialBuilder: Aerial perspective uniforms passed',
+                        hasTransmittanceLUT && hasAerialEnabled && hasPlanetCenter,
+                        `transmittanceLUT: ${hasTransmittanceLUT}, aerialEnabled: ${hasAerialEnabled}, planetCenter: ${hasPlanetCenter}`
+                    );
+                } catch (e) {
+                    addResult('TerrainMaterialBuilder: Aerial perspective uniforms passed', false, e.message);
+                }
+            }
+
+            // Test 9: Phase function formulas are correct
+            {
+                const wgsl = getAerialPerspectiveWGSL();
+                const hasCorrectRayleigh = wgsl.includes('3.0 / (16.0 * AP_PI)') && wgsl.includes('1.0 + cosTheta * cosTheta');
+                const hasCorrectMie = wgsl.includes('1.0 - g2') && wgsl.includes('1.0 + g2 - 2.0 * g * cosTheta');
+
+                addResult(
+                    'Phase functions: Correct formulas used',
+                    hasCorrectRayleigh && hasCorrectMie,
+                    `Rayleigh (3/16pi)(1+cos^2): ${hasCorrectRayleigh}, Mie Henyey-Greenstein: ${hasCorrectMie}`
+                );
+            }
+
+            // Test 10: Transmittance UV mapping is correct
+            {
+                const wgsl = getAerialPerspectiveWGSL();
+                const hasAltitudeMapping = wgsl.includes('sqrt') && wgsl.includes('planetRadius + altitude');
+                const hasAngleMapping = wgsl.includes('cosT * 0.5 + 0.5');
+                const hasClamp = wgsl.includes('clamp(rho / max(H');
+
+                addResult(
+                    'Transmittance UV: Correct altitude/angle mapping',
+                    hasAltitudeMapping && hasAngleMapping && hasClamp,
+                    `altitude sqrt: ${hasAltitudeMapping}, angle 0.5+0.5: ${hasAngleMapping}, clamped: ${hasClamp}`
+                );
+            }
+
+            // Test 11: Final color formula is correct
+            {
+                const wgsl = getAerialPerspectiveWGSL();
+                const hasTransmittanceApply = wgsl.includes('baseColor * avgTransmittance + ap.inscatter');
+                const hasMixBlend = wgsl.includes('mix(baseColor, withAP, blend)');
+
+                addResult(
+                    'Final color: Correct formula (color*transmittance + inscatter)',
+                    hasTransmittanceApply && hasMixBlend,
+                    `transmittance+inscatter: ${hasTransmittanceApply}, blend mix: ${hasMixBlend}`
+                );
+            }
+
+            // Test 12: WebGPU shader has transmittance LUT binding
+            {
+                try {
+                    const module = await import('./js/mesh/terrain/shaders/webgpu/terrainChunkFragmentShaderBuilder.js');
+                    const shader = module.buildTerrainChunkFragmentShader({});
+
+                    const hasBinding = shader.includes('transmittanceLUT: texture_2d<f32>');
+                    const hasSampler = shader.includes('transmittanceSampler: sampler');
+
+                    addResult(
+                        'WebGPU shader: Transmittance LUT binding exists',
+                        hasBinding && hasSampler,
+                        `texture binding: ${hasBinding}, sampler: ${hasSampler}`
+                    );
+                } catch (e) {
+                    addResult('WebGPU shader: Transmittance LUT binding exists', false, e.message);
+                }
+            }
+
+            // Test 13: WebGL2 shader has transmittance LUT uniform
+            {
+                try {
+                    const module = await import('./js/mesh/terrain/shaders/webgl2/terrainChunkFragmentShaderBuilder.js');
+                    const shader = module.buildTerrainChunkFragmentShader({});
+
+                    const hasUniform = shader.includes('uniform sampler2D transmittanceLUT');
+
+                    addResult(
+                        'WebGL2 shader: Transmittance LUT uniform exists',
+                        hasUniform,
+                        `sampler2D transmittanceLUT: ${hasUniform}`
+                    );
+                } catch (e) {
+                    addResult('WebGL2 shader: Transmittance LUT uniform exists', false, e.message);
+                }
+            }
+
+            // Test 14: WebGL2 shader has atmospheric uniform declarations
+            {
+                try {
+                    const module = await import('./js/mesh/terrain/shaders/webgl2/terrainChunkFragmentShaderBuilder.js');
+                    const shader = module.buildTerrainChunkFragmentShader({});
+
+                    const hasPlanetCenter = shader.includes('uniform vec3 planetCenter');
+                    const hasPlanetRadius = shader.includes('uniform float atmospherePlanetRadius');
+                    const hasAtmoRadius = shader.includes('uniform float atmosphereRadius');
+                    const hasRayleigh = shader.includes('atmosphereRayleighScattering');
+                    const hasMie = shader.includes('atmosphereMieScattering');
+
+                    const allPresent = hasPlanetCenter && hasPlanetRadius && hasAtmoRadius && hasRayleigh && hasMie;
+                    addResult(
+                        'WebGL2 shader: Atmospheric uniforms declared',
+                        allPresent,
+                        `planetCenter: ${hasPlanetCenter}, planetRadius: ${hasPlanetRadius}, atmoRadius: ${hasAtmoRadius}`
+                    );
+                } catch (e) {
+                    addResult('WebGL2 shader: Atmospheric uniforms declared', false, e.message);
+                }
+            }
+
+            updateSummary();
+            console.log('=== Tests Complete ===');
+        }
+
+        runTests().catch(err => {
+            console.error('Test error:', err);
+            addResult('Test runner error', false, err.message);
+            updateSummary();
+        });
+    </script>
+</body>
+</html>

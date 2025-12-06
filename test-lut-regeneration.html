@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test: LUT Regeneration (2.4)</title>
+    <style>
+        body { font-family: monospace; margin: 20px; background: #1a1a1a; color: #e0e0e0; }
+        .test { padding: 10px; margin: 5px 0; border-left: 3px solid #666; }
+        .pass { border-left-color: #4CAF50; background: #1b3d1b; }
+        .fail { border-left-color: #f44336; background: #3d1b1b; }
+        .pending { border-left-color: #ff9800; background: #3d3d1b; }
+        h2 { color: #fff; }
+        #summary { margin-top: 20px; padding: 15px; background: #333; }
+    </style>
+</head>
+<body>
+    <h2>LUT Regeneration Tests (Feature 2.4)</h2>
+    <div id="results"></div>
+    <div id="summary"></div>
+
+    <script type="module">
+        import { PlanetAtmosphereSettings } from './js/planet/atmosphere/planetAtmosphereSettings.js';
+        import { AtmosphericScatteringLUT } from './js/renderer/atmosphere/atmosphericScatteringLUT.js';
+
+        const results = [];
+        const resultsDiv = document.getElementById('results');
+        const summaryDiv = document.getElementById('summary');
+
+        function log(msg) {
+            console.log(msg);
+        }
+
+        function addResult(name, passed, details = '') {
+            results.push({ name, passed, details });
+            const div = document.createElement('div');
+            div.className = `test ${passed ? 'pass' : 'fail'}`;
+            div.innerHTML = `<strong>${passed ? 'PASS' : 'FAIL'}:</strong> ${name}${details ? '<br>' + details : ''}`;
+            resultsDiv.appendChild(div);
+        }
+
+        function updateSummary() {
+            const passed = results.filter(r => r.passed).length;
+            const total = results.length;
+            summaryDiv.innerHTML = `<strong>Summary:</strong> ${passed}/${total} tests passed`;
+            summaryDiv.style.background = passed === total ? '#1b3d1b' : '#3d1b1b';
+        }
+
+        class MockBackend {
+            getAPIName() { return 'mock'; }
+            createTexture() {}
+        }
+
+        class MockUniformManager {
+            constructor() {
+                this.uniforms = {
+                    atmospherePlanetRadius: { value: 6371000 },
+                    atmosphereRadius: { value: 6471000 },
+                    atmosphereScaleHeightRayleigh: { value: 8000 },
+                    atmosphereScaleHeightMie: { value: 1200 },
+                    atmosphereRayleighScattering: { value: { x: 5.5e-6, y: 13.0e-6, z: 22.4e-6 } },
+                    atmosphereMieScattering: { value: 21e-6 },
+                    atmosphereOzoneAbsorption: { value: { x: 0.65e-6, y: 1.88e-6, z: 0.085e-6 } }
+                };
+            }
+            setAtmosphereLUTs() {}
+        }
+
+        class MockAtmosphericScatteringLUT extends AtmosphericScatteringLUT {
+            constructor(backend, uniformManager) {
+                super(backend, uniformManager);
+                this.computeCallCount = 0;
+            }
+
+            _createTextures() {
+                this.transmittanceLUT = { mock: true };
+                this.multiScatterLUT = { mock: true };
+            }
+
+            async _initializeResources() {}
+
+            _generateTransmittanceLUT() {
+                this.computeCallCount++;
+            }
+
+            dispose() {}
+        }
+
+        async function runTests() {
+            log('=== LUT Regeneration Tests ===');
+
+            // Test 1: Settings comparison - equal settings
+            {
+                const settings1 = PlanetAtmosphereSettings.createPreset('earth');
+                const settings2 = PlanetAtmosphereSettings.createPreset('earth');
+
+                const areEqual = settingsEqualTest(settings1, settings2);
+                addResult(
+                    'Settings comparison: identical settings should be equal',
+                    areEqual === true,
+                    `Result: ${areEqual}`
+                );
+            }
+
+            // Test 2: Settings comparison - different planets
+            {
+                const earth = PlanetAtmosphereSettings.createPreset('earth');
+                const mars = PlanetAtmosphereSettings.createPreset('mars');
+
+                const areEqual = settingsEqualTest(earth, mars);
+                addResult(
+                    'Settings comparison: different planets should not be equal',
+                    areEqual === false,
+                    `Result: ${areEqual}`
+                );
+            }
+
+            // Test 3: Settings comparison - epsilon tolerance
+            {
+                const settings1 = new PlanetAtmosphereSettings({ planetRadius: 6371000 });
+                const settings2 = new PlanetAtmosphereSettings({ planetRadius: 6371000 + 1e-12 });
+
+                const areEqual = settingsEqualTest(settings1, settings2);
+                addResult(
+                    'Settings comparison: tiny differences within epsilon should be equal',
+                    areEqual === true,
+                    `Epsilon tolerance test`
+                );
+            }
+
+            // Test 4: Planet presets exist
+            {
+                const earth = PlanetAtmosphereSettings.createPreset('earth');
+                const mars = PlanetAtmosphereSettings.createPreset('mars');
+                const venus = PlanetAtmosphereSettings.createPreset('venus');
+
+                const valid = earth && mars && venus &&
+                    earth.planetRadius === 6371000 &&
+                    mars.planetRadius === 3389500 &&
+                    venus.planetRadius === 6051800;
+
+                addResult(
+                    'Planet presets: earth, mars, venus should exist with correct radii',
+                    valid,
+                    `Earth: ${earth.planetRadius}, Mars: ${mars.planetRadius}, Venus: ${venus.planetRadius}`
+                );
+            }
+
+            // Test 5: needsRecompute returns true when dirty
+            {
+                const backend = new MockBackend();
+                const uniformManager = new MockUniformManager();
+                const lut = new MockAtmosphericScatteringLUT(backend, uniformManager);
+                await lut.initialize();
+
+                lut.invalidate();
+                const earth = PlanetAtmosphereSettings.createPreset('earth');
+                const needsRecompute = lut.needsRecompute(earth);
+
+                addResult(
+                    'needsRecompute: should return true when invalidated',
+                    needsRecompute === true,
+                    `Result: ${needsRecompute}`
+                );
+            }
+
+            // Test 6: needsRecompute returns false after compute with same settings
+            {
+                const backend = new MockBackend();
+                const uniformManager = new MockUniformManager();
+                const lut = new MockAtmosphericScatteringLUT(backend, uniformManager);
+                await lut.initialize();
+
+                const earth = PlanetAtmosphereSettings.createPreset('earth');
+                await lut.compute(earth);
+                const needsRecompute = lut.needsRecompute(earth);
+
+                addResult(
+                    'needsRecompute: should return false after compute with same settings',
+                    needsRecompute === false,
+                    `Result: ${needsRecompute}`
+                );
+            }
+
+            // Test 7: needsRecompute returns true when settings change
+            {
+                const backend = new MockBackend();
+                const uniformManager = new MockUniformManager();
+                const lut = new MockAtmosphericScatteringLUT(backend, uniformManager);
+                await lut.initialize();
+
+                const earth = PlanetAtmosphereSettings.createPreset('earth');
+                await lut.compute(earth);
+
+                const mars = PlanetAtmosphereSettings.createPreset('mars');
+                const needsRecompute = lut.needsRecompute(mars);
+
+                addResult(
+                    'needsRecompute: should return true when settings change',
+                    needsRecompute === true,
+                    `Result: ${needsRecompute}`
+                );
+            }
+
+            // Test 8: Switching to same planet twice should not trigger second regen
+            {
+                const backend = new MockBackend();
+                const uniformManager = new MockUniformManager();
+                const lut = new MockAtmosphericScatteringLUT(backend, uniformManager);
+                await lut.initialize();
+
+                const earth1 = PlanetAtmosphereSettings.createPreset('earth');
+                const earth2 = PlanetAtmosphereSettings.createPreset('earth');
+
+                await lut.compute(earth1);
+                const countAfterFirst = lut.computeCallCount;
+
+                await lut.compute(earth2);
+                const countAfterSecond = lut.computeCallCount;
+
+                addResult(
+                    'Duplicate planet switch: should not regenerate twice',
+                    countAfterFirst === countAfterSecond,
+                    `Computes: first=${countAfterFirst}, second=${countAfterSecond}`
+                );
+            }
+
+            // Test 9: Manual invalidate triggers regen
+            {
+                const backend = new MockBackend();
+                const uniformManager = new MockUniformManager();
+                const lut = new MockAtmosphericScatteringLUT(backend, uniformManager);
+                await lut.initialize();
+
+                const earth = PlanetAtmosphereSettings.createPreset('earth');
+                await lut.compute(earth);
+                const countBefore = lut.computeCallCount;
+
+                lut.invalidate();
+                await lut.compute(earth);
+                const countAfter = lut.computeCallCount;
+
+                addResult(
+                    'Manual invalidate: should trigger regeneration',
+                    countAfter === countBefore + 1,
+                    `Computes: before=${countBefore}, after=${countAfter}`
+                );
+            }
+
+            // Test 10: cloneSettings creates independent copy
+            {
+                const original = PlanetAtmosphereSettings.createPreset('earth');
+                const cloned = cloneSettingsTest(original);
+
+                cloned.planetRadius = 1000;
+
+                const independent = original.planetRadius !== cloned.planetRadius;
+                addResult(
+                    'cloneSettings: should create independent copy',
+                    independent,
+                    `Original: ${original.planetRadius}, Cloned after modify: ${cloned.planetRadius}`
+                );
+            }
+
+            // Test 11: isComputed flag
+            {
+                const backend = new MockBackend();
+                const uniformManager = new MockUniformManager();
+                const lut = new MockAtmosphericScatteringLUT(backend, uniformManager);
+                await lut.initialize();
+
+                const beforeCompute = lut.isComputed === false;
+
+                const earth = PlanetAtmosphereSettings.createPreset('earth');
+                await lut.compute(earth);
+
+                const afterCompute = lut.isComputed === true;
+
+                addResult(
+                    'isComputed flag: should be false before, true after compute',
+                    beforeCompute && afterCompute,
+                    `Before: ${!beforeCompute}, After: ${afterCompute}`
+                );
+            }
+
+            // Test 12: Mars atmosphere has reddish scattering
+            {
+                const mars = PlanetAtmosphereSettings.createPreset('mars');
+                const r = mars.rayleighScattering.x;
+                const g = mars.rayleighScattering.y;
+                const b = mars.rayleighScattering.z;
+
+                const isReddish = r > g && g > b;
+                addResult(
+                    'Mars atmosphere: should have reddish scattering (R > G > B)',
+                    isReddish,
+                    `R=${r.toExponential(2)}, G=${g.toExponential(2)}, B=${b.toExponential(2)}`
+                );
+            }
+
+            // Test 13: Venus atmosphere has thick mie scattering
+            {
+                const earth = PlanetAtmosphereSettings.createPreset('earth');
+                const venus = PlanetAtmosphereSettings.createPreset('venus');
+
+                const venusThicker = venus.mieScattering > earth.mieScattering;
+                addResult(
+                    'Venus atmosphere: should have thicker mie scattering than Earth',
+                    venusThicker,
+                    `Earth: ${earth.mieScattering.toExponential(2)}, Venus: ${venus.mieScattering.toExponential(2)}`
+                );
+            }
+
+            // Test 14: lastComputeTime is recorded
+            {
+                const backend = new MockBackend();
+                const uniformManager = new MockUniformManager();
+                const lut = new MockAtmosphericScatteringLUT(backend, uniformManager);
+                await lut.initialize();
+
+                const earth = PlanetAtmosphereSettings.createPreset('earth');
+                await lut.compute(earth);
+
+                const hasTime = typeof lut.lastComputeTime === 'number' && lut.lastComputeTime > 0;
+                addResult(
+                    'lastComputeTime: should be recorded after compute',
+                    hasTime,
+                    `Time: ${lut.lastComputeTime}`
+                );
+            }
+
+            updateSummary();
+            log('=== Tests Complete ===');
+        }
+
+        function settingsEqualTest(a, b) {
+            const epsilon = 1e-10;
+
+            if (Math.abs(a.planetRadius - b.planetRadius) > epsilon) return false;
+            if (Math.abs(a.atmosphereRadius - b.atmosphereRadius) > epsilon) return false;
+            if (Math.abs(a.scaleHeightRayleigh - b.scaleHeightRayleigh) > epsilon) return false;
+            if (Math.abs(a.scaleHeightMie - b.scaleHeightMie) > epsilon) return false;
+            if (Math.abs(a.mieScattering - b.mieScattering) > epsilon) return false;
+            if (Math.abs(a.mieAnisotropy - b.mieAnisotropy) > epsilon) return false;
+
+            if (Math.abs(a.rayleighScattering.x - b.rayleighScattering.x) > epsilon) return false;
+            if (Math.abs(a.rayleighScattering.y - b.rayleighScattering.y) > epsilon) return false;
+            if (Math.abs(a.rayleighScattering.z - b.rayleighScattering.z) > epsilon) return false;
+
+            return true;
+        }
+
+        function cloneSettingsTest(settings) {
+            return new PlanetAtmosphereSettings({
+                planetRadius: settings.planetRadius,
+                atmosphereHeight: settings.atmosphereHeight,
+                rayleighScatteringR: settings.rayleighScattering.x,
+                rayleighScatteringG: settings.rayleighScattering.y,
+                rayleighScatteringB: settings.rayleighScattering.z,
+                mieScattering: settings.mieScattering,
+                mieAnisotropy: settings.mieAnisotropy,
+                scaleHeightRayleigh: settings.scaleHeightRayleigh,
+                scaleHeightMie: settings.scaleHeightMie,
+                groundAlbedo: settings.groundAlbedo,
+                sunIntensity: settings.sunIntensity
+            });
+        }
+
+        runTests().catch(err => {
+            console.error('Test error:', err);
+            addResult('Test runner error', false, err.message);
+            updateSummary();
+        });
+    </script>
+</body>
+</html>

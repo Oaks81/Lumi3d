@@ -4,15 +4,19 @@ export class AtmosphericScatteringLUT {
     constructor(backend, uniformManager) {
         this.backend = backend;
         this.uniformManager = uniformManager;
-        
+
         this.transmittanceLUT = null;
         this.multiScatterLUT = null;
-        
+
         this.transmittanceSize = { width: 256, height: 64 };
         this.multiScatterSize = { width: 32, height: 32 };
-        
+
         this._isDirty = true;
         this._isInitialized = false;
+
+        this.isComputed = false;
+        this.currentSettings = null;
+        this.lastComputeTime = 0;
     }
     
     async initialize() {
@@ -77,13 +81,98 @@ export class AtmosphericScatteringLUT {
     markDirty() {
         this._isDirty = true;
     }
-    
+
+    invalidate() {
+        this._isDirty = true;
+    }
+
+    needsRecompute(atmosphereSettings) {
+        if (this._isDirty) return true;
+        if (!this.isComputed) return true;
+        if (!this.currentSettings) return true;
+        if (!this.settingsEqual(this.currentSettings, atmosphereSettings)) return true;
+        return false;
+    }
+
+    settingsEqual(a, b) {
+        if (!a || !b) return false;
+        const epsilon = 1e-10;
+
+        if (Math.abs(a.planetRadius - b.planetRadius) > epsilon) return false;
+        if (Math.abs(a.atmosphereRadius - b.atmosphereRadius) > epsilon) return false;
+        if (Math.abs(a.scaleHeightRayleigh - b.scaleHeightRayleigh) > epsilon) return false;
+        if (Math.abs(a.scaleHeightMie - b.scaleHeightMie) > epsilon) return false;
+        if (Math.abs(a.mieScattering - b.mieScattering) > epsilon) return false;
+        if (Math.abs(a.mieAnisotropy - b.mieAnisotropy) > epsilon) return false;
+
+        if (Math.abs(a.rayleighScattering.x - b.rayleighScattering.x) > epsilon) return false;
+        if (Math.abs(a.rayleighScattering.y - b.rayleighScattering.y) > epsilon) return false;
+        if (Math.abs(a.rayleighScattering.z - b.rayleighScattering.z) > epsilon) return false;
+
+        return true;
+    }
+
+    cloneSettings(settings) {
+        if (!settings) return null;
+        return {
+            planetRadius: settings.planetRadius,
+            atmosphereRadius: settings.atmosphereRadius,
+            atmosphereHeight: settings.atmosphereHeight,
+            rayleighScattering: {
+                x: settings.rayleighScattering.x,
+                y: settings.rayleighScattering.y,
+                z: settings.rayleighScattering.z
+            },
+            mieScattering: settings.mieScattering,
+            mieAnisotropy: settings.mieAnisotropy,
+            scaleHeightRayleigh: settings.scaleHeightRayleigh,
+            scaleHeightMie: settings.scaleHeightMie,
+            groundAlbedo: settings.groundAlbedo,
+            sunIntensity: settings.sunIntensity
+        };
+    }
+
     update() {
         if (!this._isInitialized || !this._isDirty) return;
-        
+
+        const startTime = performance.now();
         this._generateTransmittanceLUT();
+        const elapsed = performance.now() - startTime;
+
+        console.log(`[AtmosphericScatteringLUT] Transmittance LUT computed in ${elapsed.toFixed(2)}ms`);
+
         this._isDirty = false;
-        
+
+        this.uniformManager.setAtmosphereLUTs(
+            this.transmittanceLUT,
+            this.multiScatterLUT,
+            null
+        );
+    }
+
+    async compute(atmosphereSettings) {
+        if (!this._isInitialized) {
+            console.warn('[AtmosphericScatteringLUT] Not initialized');
+            return;
+        }
+
+        if (!this.needsRecompute(atmosphereSettings)) {
+            return;
+        }
+
+        console.log('Atmosphere dirty, regenerating LUTs');
+
+        const startTime = performance.now();
+        this._generateTransmittanceLUT();
+        const elapsed = performance.now() - startTime;
+
+        this.isComputed = true;
+        this._isDirty = false;
+        this.currentSettings = this.cloneSettings(atmosphereSettings);
+        this.lastComputeTime = elapsed;
+
+        console.log(`LUTs regenerated in ${elapsed.toFixed(2)}ms`);
+
         this.uniformManager.setAtmosphereLUTs(
             this.transmittanceLUT,
             this.multiScatterLUT,

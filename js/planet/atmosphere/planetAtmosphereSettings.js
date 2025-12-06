@@ -148,4 +148,57 @@ export class PlanetAtmosphereSettings {
             sunIntensity: 25.0
         });
     }
+
+    static createPreset(presetName) {
+        switch (presetName.toLowerCase()) {
+            case 'earth':
+                return new PlanetAtmosphereSettings({
+                    planetRadius: 6371000,
+                    atmosphereHeight: 100000,
+                    rayleighScatteringR: 5.5e-6,
+                    rayleighScatteringG: 13.0e-6,
+                    rayleighScatteringB: 22.4e-6,
+                    mieScattering: 21e-6,
+                    mieAnisotropy: 0.758,
+                    scaleHeightRayleigh: 8000,
+                    scaleHeightMie: 1200,
+                    groundAlbedo: 0.3,
+                    sunIntensity: 20.0
+                });
+
+            case 'mars':
+                return new PlanetAtmosphereSettings({
+                    planetRadius: 3389500,
+                    atmosphereHeight: 125000,
+                    rayleighScatteringR: 19.9e-6,
+                    rayleighScatteringG: 13.6e-6,
+                    rayleighScatteringB: 5.8e-6,
+                    mieScattering: 4e-6,
+                    mieAnisotropy: 0.76,
+                    scaleHeightRayleigh: 11100,
+                    scaleHeightMie: 2500,
+                    groundAlbedo: 0.25,
+                    sunIntensity: 18.0
+                });
+
+            case 'venus':
+                return new PlanetAtmosphereSettings({
+                    planetRadius: 6051800,
+                    atmosphereHeight: 250000,
+                    rayleighScatteringR: 4.5e-6,
+                    rayleighScatteringG: 11.0e-6,
+                    rayleighScatteringB: 20.0e-6,
+                    mieScattering: 30e-6,
+                    mieAnisotropy: 0.85,
+                    scaleHeightRayleigh: 15900,
+                    scaleHeightMie: 3000,
+                    groundAlbedo: 0.75,
+                    sunIntensity: 25.0
+                });
+
+            default:
+                console.warn(`Unknown preset: ${presetName}, using Earth`);
+                return PlanetAtmosphereSettings.createPreset('earth');
+        }
+    }
 }

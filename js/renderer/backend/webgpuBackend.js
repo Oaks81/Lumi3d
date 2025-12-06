@@ -684,7 +684,7 @@ _describeLayouts(layouts) {
             console.log('  -> Orbital sphere layout');
             return this._createOrbitalSphereLayouts();
         }
-
+          
         // Custom layout spec (e.g., instanced debug)
         if (material.bindGroupLayoutSpec) {
             return this._buildLayoutsFromSpec(material.bindGroupLayoutSpec);
@@ -705,7 +705,7 @@ _describeLayouts(layouts) {
 
     _createTerrainBindGroupLayouts() {
         const layouts = [];
-        
+    
         // Group 0: Uniforms (unchanged)
         layouts.push(this.device.createBindGroupLayout({
             entries: [
@@ -714,36 +714,17 @@ _describeLayouts(layouts) {
             ]
         }));
     
+        // Group 1: Per-chunk textures (unchanged)
         layouts.push(this.device.createBindGroupLayout({
             entries: [
-                { 
-                    binding: 0, 
-                    visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
-                    texture: { sampleType: 'unfilterable-float' } 
-                },
-                { 
-                    binding: 1, 
-                    visibility: GPUShaderStage.FRAGMENT, 
-                    texture: { sampleType: 'unfilterable-float' } 
-                },
-                { 
-                    binding: 2, 
-                    visibility: GPUShaderStage.FRAGMENT, 
-                    texture: { sampleType: 'unfilterable-float' } 
-                },
-                { 
-                    binding: 3, 
-                    visibility: GPUShaderStage.FRAGMENT, 
-                    texture: { sampleType: 'unfilterable-float' } 
-                },
-                { 
-                    binding: 4, 
-                    visibility: GPUShaderStage.FRAGMENT, 
-                    texture: { sampleType: 'unfilterable-float' } 
-                }
+                { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
+                { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
+                { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
+                { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
+                { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } }
             ]
         }));
-        
+    
         // Group 2: Atlas and Lookups (unchanged)
         layouts.push(this.device.createBindGroupLayout({
             entries: [
@@ -757,7 +738,7 @@ _describeLayouts(layouts) {
             ]
         }));
     
-        // Group 3: Shadows and Clusters (unchanged)
+        // Group 3: Shadows, Clusters, and Atmosphere LUT
         layouts.push(this.device.createBindGroupLayout({
             entries: [
                 { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
@@ -766,10 +747,12 @@ _describeLayouts(layouts) {
                 { binding: 3, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
                 { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
                 { binding: 5, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
-                { binding: 6, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } }
+                { binding: 6, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
+                { binding: 7, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+                { binding: 8, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } }
             ]
         }));
-        
+    
         return layouts;
     }
     
@@ -932,10 +915,11 @@ _describeLayouts(layouts) {
         return data;
     }
 
+
+
     _createTerrainBindGroups(material, uniforms) {
         const groups = [];
-
-        // Helper to get texture view
+    
         const getView = (name) => {
             const tex = uniforms[name]?.value;
             if (tex && tex._gpuTexture && tex._gpuTexture.view) {
@@ -943,12 +927,10 @@ _describeLayouts(layouts) {
             }
             return this._getOrCreateDummyTexture().createView();
         };
-
+    
         // Group 0: Uniforms
-        // Use per-material keys so chunks don't overwrite each other's uniform data
         const vertKey = `vert_${material.id}`;
         const fragKey = `frag_${material.id}`;
-
         const vertU = this._getOrCreateUniformBuffer(vertKey, this._packVertexUniforms(uniforms));
         const fragU = this._getOrCreateUniformBuffer(fragKey, this._packFragmentUniforms(uniforms));
         groups.push(this.device.createBindGroup({
@@ -958,26 +940,15 @@ _describeLayouts(layouts) {
                 { binding: 1, resource: { buffer: fragU } }
             ]
         }));
-
+    
         // Group 1: Chunk textures
-        const chunkTextureNames = [
-            'heightTexture',
-            'normalTexture',
-            'tileTexture',
-            'splatDataMap',
-            'macroMaskTexture'
-        ];
-
-        const g1Entries = [];
-        chunkTextureNames.forEach((name, i) => {
-            g1Entries.push({ binding: i, resource: getView(name) });
-        });
-
+        const chunkTextureNames = ['heightTexture', 'normalTexture', 'tileTexture', 'splatDataMap', 'macroMaskTexture'];
+        const g1Entries = chunkTextureNames.map((name, i) => ({ binding: i, resource: getView(name) }));
         groups.push(this.device.createBindGroup({
             layout: material._gpuPipeline.bindGroupLayouts[1],
             entries: g1Entries
         }));
-
+    
         // Group 2: Atlases & Lookups
         const g2Entries = [
             { binding: 0, resource: getView('atlasTexture') },
@@ -992,8 +963,8 @@ _describeLayouts(layouts) {
             layout: material._gpuPipeline.bindGroupLayouts[2],
             entries: g2Entries
         }));
-
-        // Group 3: Shadows & Clusters
+    
+        // Group 3: Shadows, Clusters, and Transmittance LUT
         const g3Entries = [
             { binding: 0, resource: getView('shadowMapCascade0') },
             { binding: 1, resource: getView('shadowMapCascade1') },
@@ -1001,13 +972,15 @@ _describeLayouts(layouts) {
             { binding: 3, resource: this._samplerCache.get('shadow') },
             { binding: 4, resource: getView('clusterDataTexture') },
             { binding: 5, resource: getView('lightDataTexture') },
-            { binding: 6, resource: getView('lightIndicesTexture') }
+            { binding: 6, resource: getView('lightIndicesTexture') },
+            { binding: 7, resource: getView('transmittanceLUT') },
+            { binding: 8, resource: this._samplerCache.get('linear') }
         ];
         groups.push(this.device.createBindGroup({
             layout: material._gpuPipeline.bindGroupLayouts[3],
             entries: g3Entries
         }));
-
+    
         return groups;
     }
 
@@ -1088,96 +1061,94 @@ _describeLayouts(layouts) {
         
         return data;
     }
-    _packFragmentUniforms(uniforms) {
-        // TEMP DIAGNOSTIC: log first terrain fragment uniforms to verify atlas UVs
-        if (!this._loggedTerrainFragUniforms && (uniforms.useAtlasMode || uniforms.atlasUVOffset || uniforms.atlasUVScale)) {
-            this._loggedTerrainFragUniforms = true;
-            console.log('[WebGPUBackend] Frag uniforms (terrain) atlas debug:', {
-                useAtlasMode: uniforms.useAtlasMode?.value,
-                atlasUVOffset: uniforms.atlasUVOffset?.value,
-                atlasUVScale: uniforms.atlasUVScale?.value,
-                chunkOffset: uniforms.chunkOffset?.value,
-                chunkWidth: uniforms.chunkWidth?.value,
-                chunkHeight: uniforms.chunkHeight?.value
-            });
-        }
 
-        // Strict std140 layout packing to match FragmentUniforms WGSL.
-        // Index mapping (floats unless noted):
-        //  0-2: cameraPosition.xyz, 3: time
-        //  4-5: chunkOffset.xy, 6: chunkWidth, 7: chunkHeight
-        //  8-10: lightDirection.xyz, 11: pad
-        // 12-14: lightColor.xyz,    15: pad
-        // 16-18: ambientColor.xyz,  19: enableSplatLayer
-        // 20: enableMacroLayer, 21: geometryLOD (i32), 22: currentSeason (i32), 23: nextSeason (i32)
-        // 24: seasonTransition, 25: atlasTextureSize, 26: _padAtlas, 27: implicit pad
-        // 28-29: atlasUVOffset.xy, 30: atlasUVScale, 31: useAtlasMode (i32), 32: isFeature
-        const buf = new ArrayBuffer(256);
+
+    _packFragmentUniforms(uniforms) {
+        const buf = new ArrayBuffer(512);
         const f32 = new Float32Array(buf);
         const i32 = new Int32Array(buf);
-
-        // cameraPosition (vec3) + time
+    
+        // Existing uniforms (0-32)
         const cam = uniforms.cameraPosition?.value;
         f32[0] = cam?.x ?? 0;
         f32[1] = cam?.y ?? 0;
         f32[2] = cam?.z ?? 0;
         f32[3] = uniforms.time?.value ?? 0;
-
-        // chunk data
+    
         f32[4] = uniforms.chunkOffset?.value?.x ?? 0;
         f32[5] = uniforms.chunkOffset?.value?.y ?? 0;
         f32[6] = uniforms.chunkWidth?.value ?? uniforms.chunkSize?.value ?? 128;
         f32[7] = uniforms.chunkHeight?.value ?? uniforms.chunkSize?.value ?? 128;
-
-        // light direction (vec3) + pad
+    
         const sunDir = uniforms.sunLightDirection?.value;
-        f32[8]  = sunDir?.x ?? 0;
-        f32[9]  = sunDir?.y ?? 1;
+        f32[8] = sunDir?.x ?? 0;
+        f32[9] = sunDir?.y ?? 1;
         f32[10] = sunDir?.z ?? 0;
         f32[11] = 0;
-
-        // light color (vec3) + pad
+    
         const sunCol = uniforms.sunLightColor?.value;
         f32[12] = sunCol?.r ?? 1;
         f32[13] = sunCol?.g ?? 1;
         f32[14] = sunCol?.b ?? 1;
         f32[15] = 0;
-
-        // ambient color (vec3) + enableSplatLayer
+    
         const amb = uniforms.ambientLightColor?.value;
         f32[16] = amb?.r ?? 0.3;
         f32[17] = amb?.g ?? 0.3;
         f32[18] = amb?.b ?? 0.4;
         f32[19] = uniforms.enableSplatLayer?.value ?? 1;
-
-        // macro toggle + seasons/LOD
+    
         f32[20] = uniforms.enableMacroLayer?.value ?? 1;
         i32[21] = uniforms.geometryLOD?.value ?? 0;
         i32[22] = uniforms.currentSeason?.value ?? 0;
         i32[23] = uniforms.nextSeason?.value ?? 1;
-
-        // season transition / atlas size / pad
+    
         f32[24] = uniforms.seasonTransition?.value ?? 0;
         const atlasSize = uniforms.atlasTextureSize?.value;
-        f32[25] = typeof atlasSize === 'object'
-            ? (atlasSize?.x ?? atlasSize?.width ?? 1024)
-            : (atlasSize ?? 1024);
-        f32[26] = 0; // _padAtlas
-        f32[27] = 0; // implicit padding before vec2
-
-        // atlas UV params
+        f32[25] = typeof atlasSize === 'object' ? (atlasSize?.x ?? atlasSize?.width ?? 1024) : (atlasSize ?? 1024);
+        f32[26] = 0;
+        f32[27] = 0;
+    
         const atlasOffset = uniforms.atlasUVOffset?.value;
         f32[28] = atlasOffset?.x ?? 0;
         f32[29] = atlasOffset?.y ?? 0;
         f32[30] = uniforms.atlasUVScale?.value ?? 1;
         i32[31] = uniforms.useAtlasMode?.value ?? 0;
-
-        // feature flag
+    
         f32[32] = uniforms.isFeature?.value ?? 0;
         f32[33] = uniforms.aerialPerspectiveEnabled?.value ?? 1.0;
-
+        f32[34] = 0;
+        f32[35] = 0;
+    
+        // Planet center (vec3 + padding)
+        const planetCenter = uniforms.planetCenter?.value;
+        f32[36] = planetCenter?.x ?? 0;
+        f32[37] = planetCenter?.y ?? 0;
+        f32[38] = planetCenter?.z ?? 0;
+        f32[39] = uniforms.atmospherePlanetRadius?.value ?? 50000;
+    
+        // Atmosphere params
+        f32[40] = uniforms.atmosphereRadius?.value ?? 60000;
+        f32[41] = uniforms.atmosphereScaleHeightRayleigh?.value ?? 800;
+        f32[42] = uniforms.atmosphereScaleHeightMie?.value ?? 120;
+        f32[43] = uniforms.atmosphereMieAnisotropy?.value ?? 0.8;
+    
+        // Rayleigh scattering (vec3) + Mie scattering
+        const rayleigh = uniforms.atmosphereRayleighScattering?.value;
+        f32[44] = rayleigh?.x ?? 5.5e-5;
+        f32[45] = rayleigh?.y ?? 13.0e-5;
+        f32[46] = rayleigh?.z ?? 22.4e-5;
+        f32[47] = uniforms.atmosphereMieScattering?.value ?? 21e-5;
+    
+        // Sun intensity + padding
+        f32[48] = uniforms.atmosphereSunIntensity?.value ?? 20.0;
+        f32[49] = 0;
+        f32[50] = 0;
+        f32[51] = 0;
+    
         return f32;
     }
+    
 
     _packDebugUniforms(uniforms) {
         const data = new Float32Array(32);

@@ -34,7 +34,11 @@ export class TerrainMeshManager {
 
         console.log('TerrainMeshManager initialized', backend);
     }
-
+    setAtmosphereLUT(lut) {
+        this._atmosphereLUT = lut;
+        console.log('[TerrainMeshManager] Atmosphere LUT set');
+    }
+    
     // =============================================
     // NEW: Set planetary configuration
     // =============================================
@@ -233,9 +237,10 @@ export class TerrainMeshManager {
                 planetConfig: pConfig,
                 useAtlasMode: textureInfo.useAtlasMode,
                 uvTransform: textureInfo.uvTransform,
-                heightScale
+                heightScale,
+                transmittanceLUT: this._atmosphereLUT?.transmittanceLUT || null,
+                aerialPerspectiveEnabled: pConfig?.hasAtmosphere ? 1.0 : 0.0,
             });
-
             if (!material) {
                 console.error('[TerrainMeshManager] Failed to create terrain material for', chunkKey);
                 return null;

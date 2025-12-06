@@ -1,11 +1,13 @@
 // js/mesh/terrain/shaders/webgl2/terrainChunkFragmentShaderBuilder.js
-// FIXED version with improved fog, lighting, splat/macro textures, and mipmap handling
+// With aerial perspective integration
 
 import { getClusteredLightingModule } from '../../../../lighting/clusteredLightModule.js';
+import { getAerialPerspectiveGLSL } from '../../../../renderer/atmosphere/shaders/aerialPerspectiveCommon.js';
 
 export function buildTerrainChunkFragmentShader(options = {}) {
     const maxLightIndices = options.maxLightIndices || 8192;
     const clusteredModule = getClusteredLightingModule(maxLightIndices);
+    const aerialPerspectiveCode = getAerialPerspectiveGLSL();
 
     return `#version 300 es
 precision highp float;
@@ -93,6 +95,23 @@ uniform float shadowNormalBias;
 uniform float shadowMapSize;
 uniform float receiveShadow;
 
+// Camera uniform
+// Aerial Perspective uniforms
+uniform sampler2D transmittanceLUT;
+uniform float aerialPerspectiveEnabled;
+uniform vec3 planetCenter;
+uniform float atmospherePlanetRadius;
+uniform float atmosphereRadius;
+uniform float atmosphereScaleHeightRayleigh;
+uniform float atmosphereScaleHeightMie;
+uniform vec3 atmosphereRayleighScattering;
+uniform float atmosphereMieScattering;
+uniform float atmosphereMieAnisotropy;
+uniform float atmosphereSunIntensity;
+
+// Altitude fog uniforms
+uniform float fogScaleHeight;
+
 in vec2 vUv;
 in vec3 vNormal;
 in vec3 vWorldPosition;
@@ -139,6 +158,31 @@ vec2 applyAtlasTransform(vec2 localUV) {
 
 ${includeShadowFunctions()}
 ${includeHelperFunctions()}
+
+// ============================================================================
+// AERIAL PERSPECTIVE FUNCTIONS
+// ============================================================================
+${aerialPerspectiveCode}
+
+// ============================================================================
+// ALTITUDE-BASED FOG
+// ============================================================================
+
+vec3 computeAltitudeFog(
+    vec3 color,
+    float distance,
+    float viewerAltitude,
+    float targetAltitude,
+    float baseFogDensity,
+    float scaleHeight,
+    vec3 fogCol
+) {
+    float avgAltitude = (viewerAltitude + targetAltitude) * 0.5;
+    float density = baseFogDensity * exp(-avgAltitude / scaleHeight);
+    float opticalDepth = density * distance;
+    float transmittance = exp(-opticalDepth);
+    return mix(fogCol, color, transmittance);
+}
 
 void main() {
     int activeSeason = (seasonTransition < 0.5) ? currentSeason : nextSeason;
@@ -465,10 +509,44 @@ vec2 rotatedMacroLocal = clamp(rotateUV(macroLocal, macroRot), vec2(0.0), vec2(1
     
     vec3 finalColor = baseColor * (ambient + diffuse * shadow);
 
-    // ====== FOG - matches WebGPU exactly ======
-    float fogFactor = 1.0 - exp(-vDistanceToCamera * 0.00005);
-    vec3 fogCol = vec3(0.6, 0.7, 0.8);
-    finalColor = mix(finalColor, fogCol, clamp(fogFactor, 0.0, 0.4));
+    // ========================================================================
+    // AERIAL PERSPECTIVE
+    // ========================================================================
+    if (aerialPerspectiveEnabled > 0.5) {
+        AerialPerspectiveResult apResult = ap_computeSimple(
+            transmittanceLUT,
+            vWorldPosition,
+            cameraPosition,
+            lightDir,
+            planetCenter,
+            atmospherePlanetRadius,
+            atmosphereRadius,
+            atmosphereScaleHeightRayleigh,
+            atmosphereScaleHeightMie,
+            atmosphereRayleighScattering,
+            atmosphereMieScattering,
+            atmosphereMieAnisotropy,
+            atmosphereSunIntensity
+        );
+
+        float apBlend = clamp(vDistanceToCamera / 50000.0, 0.0, 1.0);
+        finalColor = ap_applyWithBlend(finalColor, apResult, apBlend);
+    }
+
+    // ========================================================================
+    // ALTITUDE-BASED FOG (applied after aerial perspective)
+    // ========================================================================
+    float viewerAlt = length(cameraPosition - planetCenter) - atmospherePlanetRadius;
+    float fragAlt = length(vWorldPosition - planetCenter) - atmospherePlanetRadius;
+    finalColor = computeAltitudeFog(
+        finalColor,
+        vDistanceToCamera,
+        max(0.0, viewerAlt),
+        max(0.0, fragAlt),
+        fogDensity,
+        fogScaleHeight,
+        fogColor
+    );
 
     fragColor = vec4(finalColor, 1.0);
 }

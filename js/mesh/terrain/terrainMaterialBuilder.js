@@ -97,9 +97,17 @@ export class TerrainMaterialBuilder {
             const chunkSizeUV = 1.0 / faceSize;
             const chunkLocationU = faceU * chunkSizeUV;
             const chunkLocationV = faceV * chunkSizeUV;
+            
+            // Normalize planetary configuration once for uniform access
+            const pConfig = planetConfig || { 
+                radius: 50000, 
+                origin: { x: 0, y: 0, z: 0 }, 
+                atmosphereHeight: 10000, 
+                atmosphereSettings: {} 
+            };
         
-            const radius = planetConfig?.radius || 50000;
-            const origin = planetConfig?.origin || { x: 0, y: 0, z: 0 };
+            const radius = pConfig.radius || 50000;
+            const origin = pConfig.origin || { x: 0, y: 0, z: 0 };
         
             // Build defines - these MUST be set for textures to work
             const defines = {};
@@ -137,6 +145,23 @@ export class TerrainMaterialBuilder {
         // Build ALL uniforms
         // =============================================
         const uniforms = {
+            // Aerial Perspective / Atmosphere
+            transmittanceLUT: { value: options.transmittanceLUT || null },
+            aerialPerspectiveEnabled: { value: options.aerialPerspectiveEnabled ?? 1.0 },
+            planetCenter: { value: new THREE.Vector3(
+                pConfig.origin?.x ?? 0,
+                pConfig.origin?.y ?? 0,
+                pConfig.origin?.z ?? 0
+            )},
+            atmospherePlanetRadius: { value: pConfig.radius || 50000 },
+            atmosphereRadius: { value: (pConfig.radius || 50000) + (pConfig.atmosphereHeight || 10000) },
+            atmosphereScaleHeightRayleigh: { value: pConfig.atmosphereSettings?.scaleHeightRayleigh ?? 800 },
+            atmosphereScaleHeightMie: { value: pConfig.atmosphereSettings?.scaleHeightMie ?? 120 },
+            atmosphereRayleighScattering: { value: pConfig.atmosphereSettings?.rayleighScattering?.clone() ?? new THREE.Vector3(5.5e-5, 13.0e-5, 22.4e-5) },
+            atmosphereMieScattering: { value: pConfig.atmosphereSettings?.mieScattering ?? 21e-5 },
+            atmosphereMieAnisotropy: { value: pConfig.atmosphereSettings?.mieAnisotropy ?? 0.8 },
+            atmosphereSunIntensity: { value: pConfig.atmosphereSettings?.sunIntensity ?? 20.0 },
+            
             // === BASIC CHUNK ===
             chunkOffset: { value: new THREE.Vector2(chunkOffsetX, chunkOffsetZ) },
             chunkSize: { value: chunkSize },

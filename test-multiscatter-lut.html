@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-Scatter LUT Test</title>
+    <style>
+        body {
+            font-family: monospace;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #00ff00;
+        }
+        #output {
+            white-space: pre-wrap;
+            background: #000;
+            padding: 20px;
+            border: 1px solid #00ff00;
+            border-radius: 5px;
+            max-height: 500px;
+            overflow-y: auto;
+        }
+        .pass { color: #00ff00; }
+        .fail { color: #ff0000; }
+        .info { color: #00ffff; }
+    </style>
+</head>
+<body>
+    <h1>Multi-Scatter LUT Test</h1>
+    <div id="output">Initializing...</div>
+
+    <script type="module">
+        import { WebGL2Backend } from './js/renderer/backend/webgl2Backend.js';
+        import { WebGPUBackend } from './js/renderer/backend/webgpuBackend.js';
+        import { AtmosphericScatteringLUT } from
+            './js/renderer/atmosphere/atmosphericScatteringLUT.js';
+        import { PlanetAtmosphereSettings } from
+            './js/planet/atmosphere/planetAtmosphereSettings.js';
+        import { UniformManager } from './js/lighting/uniformManager.js';
+        import { MultiScatterLUTTest } from
+            './js/atmosphere/multiScatterLUTTest.js';
+        import { PlanetConfig } from './js/planet/planetConfig.js';
+
+        const output = document.getElementById('output');
+
+        function log(message, type = 'info') {
+            const div = document.createElement('div');
+            div.className = type;
+            div.textContent = message;
+            output.appendChild(div);
+            output.scrollTop = output.scrollHeight;
+        }
+
+        async function runTests() {
+            output.innerHTML = '';
+            log('Starting Multi-Scatter LUT Test...', 'info');
+            log('', 'info');
+
+            const renderCanvas = document.createElement('canvas');
+            renderCanvas.width = 800;
+            renderCanvas.height = 600;
+
+            let backend;
+            let backendType;
+
+            try {
+                if (navigator.gpu) {
+                    log('Attempting WebGPU backend...', 'info');
+                    backend = new WebGPUBackend(renderCanvas);
+                    await backend.initialize();
+                    backendType = 'WebGPU';
+                    log('WebGPU backend initialized', 'pass');
+                } else {
+                    throw new Error('WebGPU not available');
+                }
+            } catch (error) {
+                log('WebGPU failed, using WebGL2: ' + error.message, 'info');
+                backend = new WebGL2Backend(renderCanvas);
+                await backend.initialize();
+                backendType = 'WebGL2';
+                log('WebGL2 backend initialized', 'pass');
+            }
+
+            log('', 'info');
+            log('Creating UniformManager...', 'info');
+            const uniformManager = new UniformManager();
+
+            const planetConfig = new PlanetConfig({
+                radius: 6371000,
+                atmosphereHeight: 100000,
+                hasAtmosphere: true
+            });
+
+            uniformManager.updateFromPlanetConfig(planetConfig);
+
+            log('Creating AtmosphericScatteringLUT...', 'info');
+            const atmosphereLUT = await AtmosphericScatteringLUT.create(
+                backend,
+                uniformManager
+            );
+
+            log('', 'info');
+            log('Computing LUTs (transmittance + multi-scatter)...', 'info');
+            atmosphereLUT.markDirty();
+            await atmosphereLUT.compute();
+
+            log('', 'info');
+            log(`Running tests with ${backendType} backend...`, 'info');
+            log('', 'info');
+
+            const test = new MultiScatterLUTTest();
+            const passed = await test.runAllTests(
+                backend,
+                atmosphereLUT,
+                planetConfig.atmosphereSettings
+            );
+
+            log('', 'info');
+            if (passed) {
+                log('ALL TESTS PASSED!', 'pass');
+            } else {
+                log('SOME TESTS FAILED!', 'fail');
+            }
+
+            log('', 'info');
+            log('Cleaning up...', 'info');
+            atmosphereLUT.dispose();
+            backend.dispose();
+            log('Test complete.', 'info');
+        }
+
+        const originalLog = console.log;
+        const originalError = console.error;
+
+        console.log = function(...args) {
+            const message = args.join(' ');
+            if (message.includes('[PASS]')) {
+                log(message, 'pass');
+            } else if (message.includes('[FAIL]')) {
+                log(message, 'fail');
+            } else {
+                log(message, 'info');
+            }
+            originalLog.apply(console, args);
+        };
+
+        console.error = function(...args) {
+            log(args.join(' '), 'fail');
+            originalError.apply(console, args);
+        };
+
+        runTests().catch(error => {
+            log('Fatal error: ' + error.message, 'fail');
+            log(error.stack, 'fail');
+        });
+    </script>
+</body>
+</html>
