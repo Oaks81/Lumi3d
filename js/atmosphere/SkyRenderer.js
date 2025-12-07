@@ -125,6 +125,10 @@ export class SkyRenderer {
         const sunDirValue = (sunDir || global.sunLightDirection?.value || new THREE.Vector3(0.5, 1.0, 0.3)).clone().normalize();
         uniforms.sunDirection.value.copy(sunDirValue);
 
+        const sunStrength = global.sunLightIntensity?.value ?? 1.0;
+        const baseSunIntensity = atmosphereSettings?.sunIntensity ?? global.atmosphereSunIntensity?.value ?? 20.0;
+        uniforms.sunIntensity.value = baseSunIntensity * sunStrength;
+
         uniforms.transmittanceLUT.value = this.atmosphereLUT.transmittanceLUT;
 
         const viewProj = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
@@ -281,12 +285,13 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
         let upAtSample = normalize(samplePos - uniforms.planetCenter);
         let cosSunZenith = dot(uniforms.sunDirection, upAtSample);
-        let sunTransmittance = sampleTransmittance(sampleAltitude, cosSunZenith);
+        let sunVisibility = max(cosSunZenith, 0.0);
+        let sunTransmittance = sampleTransmittance(sampleAltitude, cosSunZenith) * sunVisibility;
 
         let scatterR = uniforms.rayleighScattering * density.x * phaseR;
         let scatterM = vec3<f32>(uniforms.mieScattering * density.y * phaseM);
 
-        let scatterContrib = (scatterR + scatterM) * sunTransmittance * stepSize;
+        let scatterContrib = (scatterR + scatterM) * sunTransmittance * sunVisibility * stepSize;
         inscatter += transmittance * scatterContrib;
 
         let extinctionR = uniforms.rayleighScattering * density.x;
@@ -448,12 +453,13 @@ void main() {
 
         vec3 upAtSample = normalize(samplePos - planetCenter);
         float cosSunZenith = dot(sunDirection, upAtSample);
-        vec3 sunTransmittance = sampleTransmittance(sampleAltitude, cosSunZenith);
+        float sunVisibility = max(cosSunZenith, 0.0); // Only light-facing samples contribute
+        vec3 sunTransmittance = sampleTransmittance(sampleAltitude, cosSunZenith) * sunVisibility;
 
         vec3 scatterR = rayleighScattering * density.x * phaseR;
         vec3 scatterM = vec3(mieScattering * density.y * phaseM);
 
-        vec3 scatterContrib = (scatterR + scatterM) * sunTransmittance * stepSize;
+        vec3 scatterContrib = (scatterR + scatterM) * sunTransmittance * sunVisibility * stepSize;
         inscatter += transmittance * scatterContrib;
 
         vec3 extinctionR = rayleighScattering * density.x;

@@ -812,6 +812,11 @@ _describeLayouts(layouts) {
             return groups;
         }
 
+        // Cloud / custom pipeline path using explicit layout spec
+        if (material.bindGroupLayoutSpec && !materialName.includes('orbital') && !materialName.includes('sphere')) {
+            return this._createBindGroupsFromSpec(material, uniforms);
+        }
+
         // ORBITAL SPHERE: Special bind group creation
         if (materialName.includes('orbital') || materialName.includes('sphere')) {
             return this._createOrbitalSphereBindGroups(material, uniforms);
@@ -819,6 +824,59 @@ _describeLayouts(layouts) {
 
         // TERRAIN: Standard bind group creation
         return this._createTerrainBindGroups(material, uniforms);
+    }
+
+    _createBindGroupsFromSpec(material, uniforms) {
+        const groups = [];
+
+        const resolveSampler = (name, samplerDesc) => {
+            const explicit = (uniforms[name]?.value ?? uniforms[name]);
+            if (explicit && this._samplerCache.has(explicit)) return this._samplerCache.get(explicit);
+            if (samplerDesc?.type === 'nearest') return this._samplerCache.get('nearest');
+            if (samplerDesc?.type === 'shadow') return this._samplerCache.get('shadow');
+            return this._samplerCache.get('linear');
+        };
+
+        material.bindGroupLayoutSpec.forEach((groupSpec, gi) => {
+            const entries = [];
+
+            for (const entry of groupSpec.entries) {
+                const name = entry.name || entry.label || `binding${entry.binding}`;
+                if (entry.buffer) {
+                    const data = this._resolveUniformData(uniforms, name);
+                    const buf = this._getOrCreateUniformBuffer(`${material.id}_g${gi}_b${entry.binding}`, data);
+                    entries.push({ binding: entry.binding, resource: { buffer: buf } });
+                } else if (entry.texture) {
+                    const tex = this._resolveUniformTexture(uniforms, name);
+                    const view = tex?._gpuTexture?.view || this._getOrCreateDummyTexture().createView();
+                    entries.push({ binding: entry.binding, resource: view });
+                } else if (entry.sampler) {
+                    entries.push({ binding: entry.binding, resource: resolveSampler(name, entry.sampler) });
+                }
+            }
+
+            groups.push(this.device.createBindGroup({
+                layout: material._gpuPipeline.bindGroupLayouts[gi],
+                entries
+            }));
+        });
+
+        return groups;
+    }
+
+    _resolveUniformData(uniforms, name) {
+        let data = name ? (uniforms[name]?.value ?? uniforms[name]) : null;
+        if (data instanceof Float32Array) return data;
+        if (data?.elements) return new Float32Array(data.elements);
+        if (Array.isArray(data)) return new Float32Array(data);
+        if (typeof data === 'number') return new Float32Array([data, 0, 0, 0]);
+        return new Float32Array(16);
+    }
+
+    _resolveUniformTexture(uniforms, name) {
+        const tex = name ? (uniforms[name]?.value ?? uniforms[name]) : null;
+        if (tex && tex._gpuTexture) return tex;
+        return tex;
     }
 
     _createOrbitalSphereBindGroups(material, uniforms) {

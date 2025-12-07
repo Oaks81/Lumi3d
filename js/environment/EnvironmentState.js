@@ -2,8 +2,9 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.178.0/build/three.module.js';
 
 export class EnvironmentState {
-    constructor(gameTime) {
+    constructor(gameTime, planetConfig = null) {
         this.gameTime = gameTime;
+        this.planetConfig = planetConfig;
         this.windDirection = new THREE.Vector2(1, 0);
         this.windSpeed = 5.0;
         this.targetWindDirection = new THREE.Vector2(1, 0);
@@ -81,6 +82,10 @@ export class EnvironmentState {
         this.thunderLight.position.set(0,100,0);
         this.playerLight = new THREE.PointLight(0x6699ff, 0, 15);
         this.playerLight.position.set(0, 2, 0);
+    }
+
+    setPlanetConfig(planetConfig) {
+        this.planetConfig = planetConfig;
     }
 
     update(gameState) {
@@ -229,37 +234,66 @@ export class EnvironmentState {
 
     updateLighting(gameState) {
         const timeOfDay = this.gameTime.timeOfDay;
-        const lightLevel = this.gameTime.getLightLevel();
+        const planetOrigin = this.planetConfig?.origin || { x: 0, y: 0, z: 0 };
+        const axialTilt = this.planetConfig?.axialTilt || 0;
 
-        // Sun and Moon directions
-        const sunAngle = (timeOfDay / 24) * Math.PI * 2 - Math.PI / 2;
-        this.sunLightDirection.set(Math.cos(sunAngle), Math.sin(sunAngle), 0.5).normalize();
-        this.sunLightIntensity = Math.max(0, Math.sin(sunAngle)) * lightLevel;
+        // Spin the sun once per 24h; phase shift puts noon overhead and midnight below the horizon
+        const sunPhase = (timeOfDay / 24) * Math.PI * 2 - Math.PI / 2;
+        const sunDir = new THREE.Vector3(Math.cos(sunPhase), Math.sin(sunPhase), 0);
+        if (axialTilt !== 0) {
+            sunDir.applyAxisAngle(new THREE.Vector3(1, 0, 0), axialTilt);
+        }
+        sunDir.normalize();
+        this.sunLightDirection.copy(sunDir);
 
-        const moonAngle = sunAngle + Math.PI;
-        this.moonLightDirection.set(Math.cos(moonAngle), Math.sin(moonAngle), -0.5).normalize();
-        this.moonLightIntensity = Math.max(0, Math.sin(moonAngle)) * 0.3;
+        // Local up from planet center to camera
+        const camPos = gameState?.camera?.position || new THREE.Vector3();
+        const localUp = new THREE.Vector3(
+            camPos.x - planetOrigin.x,
+            camPos.y - planetOrigin.y,
+            camPos.z - planetOrigin.z
+        );
+        if (localUp.lengthSq() < 1e-6) localUp.set(0, 1, 0);
+        localUp.normalize();
 
-        // Weather effects dimming
-        let sunIntensity = this.sunLightIntensity;
-        let moonIntensity = this.moonLightIntensity;
-        let ambientIntensity = 0.4 + lightLevel * 0.4;
+        // Daylight factor based on sun above local horizon
+        const daylight = Math.max(localUp.dot(sunDir), 0);
+        const night = 1 - daylight;
+
+        // Base intensities and colors
+        let sunIntensity = daylight * 2.5;
+        let moonIntensity = night * 0.25;
+        let ambientIntensity = 0.12 + daylight * 0.5 + night * 0.08;
+
+        this.sunLightColor.setHSL(
+            0.12,
+            0.15 + 0.35 * night,
+            0.65 + 0.25 * daylight
+        );
+        this.ambientLightColor.setHSL(
+            0.58,
+            0.1 + 0.2 * daylight,
+            0.35 + 0.25 * daylight
+        );
+
+        // Moon follows the opposite side of the planet
+        this.moonLightDirection.copy(sunDir).multiplyScalar(-1);
 
         if (this.currentWeather === 'rain' || this.currentWeather === 'storm') {
-            const weatherDimming = 1 - (this.weatherIntensity * 0.4);
+            const weatherDimming = 1 - (this.weatherIntensity * 0.35);
             sunIntensity *= weatherDimming;
             moonIntensity *= weatherDimming;
             ambientIntensity *= weatherDimming;
         } else if (this.currentWeather === 'foggy') {
-            const fogDimming = 1 - (this.weatherIntensity * 0.2);
+            const fogDimming = 1 - (this.weatherIntensity * 0.15);
             sunIntensity *= fogDimming;
             moonIntensity *= fogDimming;
             ambientIntensity *= fogDimming;
         } else if (this.currentWeather === 'snow') {
-            const snowDimming = 1 - (this.weatherIntensity * 0.3);
+            const snowDimming = 1 - (this.weatherIntensity * 0.25);
             sunIntensity *= snowDimming;
             moonIntensity *= snowDimming;
-            ambientIntensity *= 1 + (this.weatherIntensity * 0.2);
+            ambientIntensity *= 1 + (this.weatherIntensity * 0.15);
         }
         
         this.sunLightIntensity = sunIntensity;

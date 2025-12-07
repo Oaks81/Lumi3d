@@ -284,7 +284,7 @@ console.log('=== TextureAtlasKey tests complete ===\n');
     
         await this.worldGenerator._ready;
     
-        this.environmentState = new EnvironmentState(this.gameTime);
+        this.environmentState = new EnvironmentState(this.gameTime, this.planetConfig);
     
         this.spaceship = new Spaceship();
         this.spaceshipModel = new SpaceshipModel();

@@ -62,6 +62,7 @@ export class Frontend {
         this.planetConfig = null;
         this.sphericalMapper = null;
         this.orbitalSphereRenderer = null;
+        this.cloudRenderer = null;
         
     }
 
@@ -426,6 +427,21 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
             this.skyRenderer = new SkyRenderer(this.backend, this.atmosphereLUT);
             await this.skyRenderer.initialize();
         }
+        const cloudConfig = {
+            gridDimensions: { x: 24, y: 16, z: 24 },
+            volumeSize: new THREE.Vector3(8000, 4000, 12000),
+            maxDistance: 12000,
+            numSteps: this.backendType === 'webgpu' ? 48 : 40,
+            cloudAnisotropy: 0.65
+        };
+        if (this.backendType === 'webgpu') {
+            const { WebGPUCloudRenderer } = await import('../clouds/webgpuCloudRenderer.js');
+            this.cloudRenderer = new WebGPUCloudRenderer(this.backend, cloudConfig);
+        } else {
+            const { WebGL2CloudRenderer } = await import('../clouds/webgl2CloudRenderer.js');
+            this.cloudRenderer = new WebGL2CloudRenderer(this.backend, cloudConfig);
+        }
+        await this.cloudRenderer.initialize();
         if (this.atmosphereLUT) {
             const { AerialPerspectiveTest } = await import('../atmosphere/aerialPerspectiveTest.js');
             this.aerialTest = new AerialPerspectiveTest(
@@ -539,6 +555,11 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
                 sunDir,
                 this.uniformManager
             );
+        }
+
+        if (this.cloudRenderer) {
+            this.cloudRenderer.update(this.camera, environmentState, this.uniformManager, deltaTime || 0, this.frameCount);
+            this.cloudRenderer.render(this.camera, environmentState, this.uniformManager);
         }
 
         if (this.orbitalSphereRenderer && gameState.altitudeZoneManager) {

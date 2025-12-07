@@ -48,8 +48,8 @@ export class GameTime {
         const elapsed = Date.now() - this.dayStartTime;
         const daysPassed = Math.floor(elapsed / this.dayDurationMs);
         this.currentDay = this.startDay + daysPassed;
-      //  this.timeOfDay = (elapsed % this.dayDurationMs) / this.dayDurationMs * 24;
-        this.timeOfDay = 16;
+        const dayProgress = (elapsed % this.dayDurationMs) / this.dayDurationMs;
+        this.timeOfDay = dayProgress * 24;
     }
     getSeason() {
         const totalSeasonLength = this.seasonData.reduce((a, b) => a + b.length, 0);
