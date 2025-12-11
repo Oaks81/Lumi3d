@@ -146,6 +146,16 @@ export class ChunkManager {
         }
     }
 
+    _estimateChunkDistance(chunkX, chunkY, face = null) {
+        const cam = this.lastCameraPosition || { x: 0, y: 0, z: 0 };
+        const chunkCenterX = (chunkX + 0.5) * this.chunkSize;
+        const chunkCenterZ = (chunkY + 0.5) * this.chunkSize;
+        const dx = chunkCenterX - cam.x;
+        const dz = chunkCenterZ - cam.z;
+        const dy = cam.y || 0;
+        return Math.sqrt(dx * dx + dy * dy + dz * dz);
+    }
+
     async requestChunk(chunkKeyOrX, priorityOrY = 0, onReady = null) {
         let chunkKey;
         let priority = 0;
@@ -253,7 +263,18 @@ export class ChunkManager {
             }
             this.chunkReadyCallbacks.get(chunkKey).push(onReady);
         }
-    
+
+        // Compute LOD for this chunk using hierarchical atlas distances if available
+        try {
+            const distance = this._estimateChunkDistance(chunkX, chunkY, face);
+            const computedLOD = this.worldGenerator?.lodAtlasConfig?.getLODForDistance(distance);
+            if (typeof computedLOD === 'number') {
+                lod = computedLOD;
+            }
+        } catch (e) {
+            console.warn('Failed to compute LOD for chunk', chunkKey, e);
+        }
+
         
         const chunkPromise = this._generateChunkAsync(chunkX, chunkY, face, lod);
         this.pendingChunks.set(chunkKey, chunkPromise);

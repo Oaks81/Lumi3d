@@ -80,31 +80,32 @@ export class WebGPUBackend extends Backend {
 
     _packAtmosphereUniforms(uniforms) {
         const data = new Float32Array(16);
-    
+
         data[0] = uniforms.atmospherePlanetRadius?.value ?? 50000;
         data[1] = uniforms.atmosphereRadius?.value ?? 55000;
         data[2] = uniforms.atmosphereScaleHeightRayleigh?.value ?? 800;
         data[3] = uniforms.atmosphereScaleHeightMie?.value ?? 120;
-    
+
         const rayleigh = uniforms.atmosphereRayleighScattering?.value;
         data[4] = rayleigh?.x ?? 5.5e-5;
         data[5] = rayleigh?.y ?? 13.0e-5;
         data[6] = rayleigh?.z ?? 22.4e-5;
         data[7] = uniforms.atmosphereMieScattering?.value ?? 21e-5;
-    
+
         const ozone = uniforms.atmosphereOzoneAbsorption?.value;
         data[8] = ozone?.x ?? 0.65e-6;
         data[9] = ozone?.y ?? 1.881e-6;
         data[10] = ozone?.z ?? 0.085e-6;
         data[11] = uniforms.atmosphereMieAnisotropy?.value ?? 0.8;
-    
+
         data[12] = uniforms.atmosphereGroundAlbedo?.value ?? 0.3;
         data[13] = uniforms.atmosphereSunIntensity?.value ?? 20.0;
         data[14] = uniforms.viewerAltitude?.value ?? 0.0;
         data[15] = 0.0;
-    
+
         return data;
     }
+
     _createDepthTexture() {
         if (this._depthTexture) {
             this._depthTexture.destroy();
@@ -244,17 +245,18 @@ export class WebGPUBackend extends Backend {
         }
         texture._needsUpload = false;
     }
+
     createStorageTexture(width, height, format) {
         const gpuFormat = this._getTextureFormat({ format });
-        
+
         const texture = this.device.createTexture({
             size: [width, height],
             format: gpuFormat,
-            usage: GPUTextureUsage.STORAGE_BINDING | 
-                   GPUTextureUsage.TEXTURE_BINDING | 
+            usage: GPUTextureUsage.STORAGE_BINDING |
+                   GPUTextureUsage.TEXTURE_BINDING |
                    GPUTextureUsage.COPY_SRC
         });
-        
+
         return {
             texture: texture,
             view: texture.createView(),
@@ -263,25 +265,25 @@ export class WebGPUBackend extends Backend {
             height: height
         };
     }
-    
+
     deleteStorageTexture(gpuTexture) {
         if (gpuTexture && gpuTexture.texture) {
             gpuTexture.texture.destroy();
         }
     }
-    
+
     createComputePipeline(descriptor) {
         const shaderModule = this.device.createShaderModule({
             label: descriptor.label || 'Compute Shader',
             code: descriptor.shaderSource
         });
-        
+
         const bindGroupLayoutEntries = descriptor.bindGroupLayouts[0].entries.map(entry => {
             const layoutEntry = {
                 binding: entry.binding,
                 visibility: GPUShaderStage.COMPUTE
             };
-            
+
             if (entry.type === 'uniform') {
                 layoutEntry.buffer = { type: 'uniform' };
             } else if (entry.type === 'storageTexture') {
@@ -295,14 +297,14 @@ export class WebGPUBackend extends Backend {
             } else if (entry.type === 'sampler') {
                 layoutEntry.sampler = { type: 'filtering' };
             }
-            
+
             return layoutEntry;
         });
-        
+
         const bindGroupLayout = this.device.createBindGroupLayout({
             entries: bindGroupLayoutEntries
         });
-        
+
         const pipeline = this.device.createComputePipeline({
             label: descriptor.label,
             layout: this.device.createPipelineLayout({
@@ -313,14 +315,14 @@ export class WebGPUBackend extends Backend {
                 entryPoint: 'main'
             }
         });
-        
+
         return { pipeline, bindGroupLayout };
     }
-    
+
     createBindGroup(layout, entries) {
         const bindGroupEntries = entries.map(entry => {
             const bgEntry = { binding: entry.binding };
-            
+
             if (entry.resource.gpuBuffer) {
                 bgEntry.resource = { buffer: entry.resource.gpuBuffer };
             } else if (entry.resource.view) {
@@ -330,27 +332,28 @@ export class WebGPUBackend extends Backend {
             } else {
                 bgEntry.resource = entry.resource;
             }
-            
+
             return bgEntry;
         });
-        
+
         return this.device.createBindGroup({
             layout: layout,
             entries: bindGroupEntries
         });
     }
-    
+
     dispatchCompute(pipeline, bindGroup, workgroupsX, workgroupsY = 1, workgroupsZ = 1) {
         const commandEncoder = this.device.createCommandEncoder();
         const computePass = commandEncoder.beginComputePass();
-        
+
         computePass.setPipeline(pipeline);
         computePass.setBindGroup(0, bindGroup);
         computePass.dispatchWorkgroups(workgroupsX, workgroupsY, workgroupsZ);
-        
+
         computePass.end();
         this.device.queue.submit([commandEncoder.finish()]);
     }
+
     createBuffer(data, usage = 'static') {
         const isIndexBuffer = data instanceof Uint16Array || data instanceof Uint32Array;
         let gpuUsage = GPUBufferUsage.COPY_DST;
@@ -504,132 +507,121 @@ export class WebGPUBackend extends Backend {
         return sizeMap[wgslType] || 12;
     }
 
-compileShader(material) {
-    const materialType = (material.name || 'unknown').toLowerCase().trim();
-    
-    // Extract base type (remove numbers, special chars)
-    const baseType = materialType.replace(/[0-9_-]/g, '');
-    
-    console.log(`Compiling shader for material: "${material.name}" (type: ${baseType})`);
-    
-    const layoutVersion = materialType.includes('terrain') ? 'v16' : 'v1';
-    const layoutKeyRaw = material.vertexLayout ? 
-        JSON.stringify(material.vertexLayout.map(l => ({ 
-            stride: l.arrayStride, 
-            step: l.stepMode, 
-            attrs: l.attributes.length 
-        }))) : 
-        `default_${layoutVersion}`;
-    const layoutKey = materialType.includes('terrain')
-        ? `${layoutKeyRaw}_v${layoutVersion}`
-        : layoutKeyRaw;
-    
-    // CRITICAL: Cache key must include shader hash to prevent collisions
-    const shaderHash = this._hashCode(material.vertexShader.substring(0, 200) + 
-                                     material.fragmentShader.substring(0, 200));
-    
-    const cacheKey = `${baseType}_${shaderHash}_${layoutKey}`;
-    
-    if (this._pipelineCache.has(cacheKey)) {
-        material._gpuPipeline = this._pipelineCache.get(cacheKey);
-        material._needsCompile = false;
-        console.log(`Using cached pipeline: ${cacheKey}`);
-        return material._gpuPipeline;
-    }
+    compileShader(material) {
+        const materialType = (material.name || 'unknown').toLowerCase().trim();
+        const baseType = materialType.replace(/[0-9_-]/g, '');
 
-    console.log(`Creating NEW pipeline: ${cacheKey}`);
+        console.log(`Compiling shader for material: "${material.name}" (type: ${baseType})`);
 
-    const vertexModule = this.device.createShaderModule({ 
-        label: `Vertex-${materialType}`, 
-        code: material.vertexShader 
-    });
-    const fragmentModule = this.device.createShaderModule({ 
-        label: `Fragment-${materialType}`, 
-        code: material.fragmentShader 
-    });
-    
-    const bindGroupLayouts = this._createBindGroupLayouts(material);
-    
-    console.log(`Bind group layouts for ${materialType}:`, {
-        count: bindGroupLayouts.length,
-        description: this._describeLayouts(bindGroupLayouts)
-    });
-    
-    const pipelineLayout = this.device.createPipelineLayout({ bindGroupLayouts });
-    
-    const vertexBufferLayouts = material.vertexLayout || this._getVertexBufferLayouts(material);
+        const layoutVersion = materialType.includes('terrain') ? 'v16' : 'v1';
+        const layoutKeyRaw = material.vertexLayout ?
+            JSON.stringify(material.vertexLayout.map(l => ({
+                stride: l.arrayStride,
+                step: l.stepMode,
+                attrs: l.attributes.length
+            }))) :
+            `default_${layoutVersion}`;
+        const layoutKey = materialType.includes('terrain')
+            ? `${layoutKeyRaw}_v${layoutVersion}`
+            : layoutKeyRaw;
 
-    try {
-        const pipeline = this.device.createRenderPipeline({
-            label: material.name || 'Material',
-            layout: pipelineLayout,
-            vertex: { 
-                module: vertexModule, 
-                entryPoint: 'main', 
-                buffers: vertexBufferLayouts
-            },
-            fragment: {
-                module: fragmentModule, 
-                entryPoint: 'main',
-                targets: [{
-                    format: this.format,
-                    blend: material.transparent ? {
-                        color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' },
-                        alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' }
-                    } : undefined
-                }]
-            },
-            primitive: {
-                topology: 'triangle-list',
-                cullMode: material.side === 'double' ? 'none' : material.side === 'back' ? 'front' : 'back',
-                frontFace: 'ccw'
-            },
-            depthStencil: material.depthTest ? {
-                format: 'depth24plus',
-                depthWriteEnabled: material.depthWrite,
-                depthCompare: 'less'
-            } : undefined
+        const shaderHash = this._hashCode(material.vertexShader.substring(0, 200) +
+                                         material.fragmentShader.substring(0, 200));
+
+        const cacheKey = `${baseType}_${shaderHash}_${layoutKey}`;
+
+        if (this._pipelineCache.has(cacheKey)) {
+            material._gpuPipeline = this._pipelineCache.get(cacheKey);
+            material._needsCompile = false;
+            console.log(`Using cached pipeline: ${cacheKey}`);
+            return material._gpuPipeline;
+        }
+
+        console.log(`Creating NEW pipeline: ${cacheKey}`);
+
+        const vertexModule = this.device.createShaderModule({
+            label: `Vertex-${materialType}`,
+            code: material.vertexShader
+        });
+        const fragmentModule = this.device.createShaderModule({
+            label: `Fragment-${materialType}`,
+            code: material.fragmentShader
         });
 
-        material._gpuPipeline = { pipeline, bindGroupLayouts, pipelineLayout, vertexBufferLayouts };
-        this._pipelineCache.set(cacheKey, material._gpuPipeline);
-        material._needsCompile = false;
-        
-        console.log(`Pipeline created: ${cacheKey}`);
-        return material._gpuPipeline;
-    } catch (error) {
-        console.error(`Pipeline creation failed for ${materialType}:`, error);
-        console.error('Vertex shader preview:\n', material.vertexShader.substring(0, 400));
-        console.error('Fragment shader preview:\n', material.fragmentShader.substring(0, 400));
-        throw error;
-    }
-}
+        const bindGroupLayouts = this._createBindGroupLayouts(material);
 
-// HELPER: Simple string hash for cache keys
-_hashCode(str) {
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-        const char = str.charCodeAt(i);
-        hash = ((hash << 5) - hash) + char;
-        hash = hash & hash; // Convert to 32bit integer
-    }
-    return Math.abs(hash).toString(36);
-}
+        console.log(`Bind group layouts for ${materialType}:`, {
+            count: bindGroupLayouts.length,
+            description: this._describeLayouts(bindGroupLayouts)
+        });
 
-// HELPER: Describe layouts for debugging
-_describeLayouts(layouts) {
-    return layouts.map((layout, i) => {
-        const entries = [];
-        // Layouts don't have entries property directly, but we created them
-        // This is just for logging, return simple count
-        return `Group${i}`;
-    });
-}
+        const pipelineLayout = this.device.createPipelineLayout({ bindGroupLayouts });
+
+        const vertexBufferLayouts = material.vertexLayout || this._getVertexBufferLayouts(material);
+
+        try {
+            const pipeline = this.device.createRenderPipeline({
+                label: material.name || 'Material',
+                layout: pipelineLayout,
+                vertex: {
+                    module: vertexModule,
+                    entryPoint: 'main',
+                    buffers: vertexBufferLayouts
+                },
+                fragment: {
+                    module: fragmentModule,
+                    entryPoint: 'main',
+                    targets: [{
+                        format: this.format,
+                        blend: material.transparent ? {
+                            color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+                            alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' }
+                        } : undefined
+                    }]
+                },
+                primitive: {
+                    topology: 'triangle-list',
+                    cullMode: material.side === 'double' ? 'none' : material.side === 'back' ? 'front' : 'back',
+                    frontFace: 'ccw'
+                },
+                depthStencil: material.depthTest ? {
+                    format: 'depth24plus',
+                    depthWriteEnabled: material.depthWrite,
+                    depthCompare: 'less'
+                } : undefined
+            });
+
+            material._gpuPipeline = { pipeline, bindGroupLayouts, pipelineLayout, vertexBufferLayouts };
+            this._pipelineCache.set(cacheKey, material._gpuPipeline);
+            material._needsCompile = false;
+
+            console.log(`Pipeline created: ${cacheKey}`);
+            return material._gpuPipeline;
+        } catch (error) {
+            console.error(`Pipeline creation failed for ${materialType}:`, error);
+            console.error('Vertex shader preview:\n', material.vertexShader.substring(0, 400));
+            console.error('Fragment shader preview:\n', material.fragmentShader.substring(0, 400));
+            throw error;
+        }
+    }
+
+    _hashCode(str) {
+        let hash = 0;
+        for (let i = 0; i < str.length; i++) {
+            const char = str.charCodeAt(i);
+            hash = ((hash << 5) - hash) + char;
+            hash = hash & hash;
+        }
+        return Math.abs(hash).toString(36);
+    }
+
+    _describeLayouts(layouts) {
+        return layouts.map((layout, i) => `Group${i}`);
+    }
 
     _createOrbitalSphereLayouts() {
         const layouts = [];
-        
-        // Group 0: Uniforms (vertex + fragment)
+
         const group0 = this.device.createBindGroupLayout({
             label: 'OrbitalSphere-Group0-Uniforms',
             entries: [
@@ -638,83 +630,78 @@ _describeLayouts(layouts) {
             ]
         });
         layouts.push(group0);
-        
-        // Group 1: Texture + Sampler
+
         const group1 = this.device.createBindGroupLayout({
             label: 'OrbitalSphere-Group1-TextureSampler',
             entries: [
-                { 
-                    binding: 0, 
-                    visibility: GPUShaderStage.FRAGMENT, 
-                    texture: { 
+                {
+                    binding: 0,
+                    visibility: GPUShaderStage.FRAGMENT,
+                    texture: {
                         sampleType: 'float',
                         viewDimension: '2d',
                         multisampled: false
-                    } 
+                    }
                 },
-                { 
-                    binding: 1, 
-                    visibility: GPUShaderStage.FRAGMENT, 
-                    sampler: { 
+                {
+                    binding: 1,
+                    visibility: GPUShaderStage.FRAGMENT,
+                    sampler: {
                         type: 'filtering'
-                    } 
+                    }
                 }
             ]
         });
         layouts.push(group1);
-        
+
         console.log('  Orbital layouts created:', {
             group0: 'Uniforms (2 buffers)',
             group1: 'Texture@0 + Sampler@1'
         });
-        
+
         return layouts;
     }
+
     _createBindGroupLayouts(material) {
         const materialName = (material.name || '').toLowerCase();
-        
+
         console.log(`Creating bind group layouts for: ${materialName}`);
-        
+
         if (materialName.includes('shadow') || materialName.includes('depth')) {
             console.log('  -> Shadow layout');
             return this._createShadowLayouts();
         }
-        
+
         if (materialName.includes('orbital') || materialName.includes('sphere')) {
             console.log('  -> Orbital sphere layout');
             return this._createOrbitalSphereLayouts();
         }
-          
-        // Custom layout spec (e.g., instanced debug)
+
         if (material.bindGroupLayoutSpec) {
             return this._buildLayoutsFromSpec(material.bindGroupLayoutSpec);
         }
-        
-        // Fallback: Check shader content
+
         const shaderContent = (material.fragmentShader || '').toLowerCase();
-        
+
         if (shaderContent.includes('planettexture')) {
             console.log('  -> Orbital sphere layout (from shader content)');
             return this._createOrbitalSphereLayouts();
         }
-        
+
         console.log('  -> Terrain layout');
         return this._createTerrainBindGroupLayouts();
     }
 
-
     _createTerrainBindGroupLayouts() {
         const layouts = [];
-    
-        // Group 0: Uniforms (unchanged)
+
         layouts.push(this.device.createBindGroupLayout({
             entries: [
                 { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
                 { binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } }
             ]
         }));
-    
-        // Group 1: Per-chunk textures (unchanged)
+
         layouts.push(this.device.createBindGroupLayout({
             entries: [
                 { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
@@ -724,8 +711,7 @@ _describeLayouts(layouts) {
                 { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } }
             ]
         }));
-    
-        // Group 2: Atlas and Lookups (unchanged)
+
         layouts.push(this.device.createBindGroupLayout({
             entries: [
                 { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
@@ -737,36 +723,24 @@ _describeLayouts(layouts) {
                 { binding: 6, visibility: GPUShaderStage.FRAGMENT, sampler: {} }
             ]
         }));
-    
-        // Group 3: Shadows, Clusters, and Atmosphere LUT
+
         layouts.push(this.device.createBindGroupLayout({
             entries: [
-                { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-                { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-                { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-                { binding: 3, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
-                { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
-                { binding: 5, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
-                { binding: 6, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
                 { binding: 7, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
                 { binding: 8, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } }
             ]
         }));
-    
+
         return layouts;
     }
-    
 
     _createShadowLayouts() {
         const layouts = [];
-
-        // Group 0: Uniforms only (no fragment uniforms for depth pass)
         layouts.push(this.device.createBindGroupLayout({
             entries: [
                 { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } }
             ]
         }));
-
         return layouts;
     }
 
@@ -798,10 +772,8 @@ _describeLayouts(layouts) {
 
     _createBindGroups(material, uniforms) {
         const groups = [];
-
         const materialName = (material.name || '').toLowerCase();
 
-        // Simple custom path for instanced debug material
         if (materialName.includes('instanceddebug') && material.bindGroupLayoutSpec) {
             const packed = this._packDebugUniforms(uniforms);
             const buf = this._getOrCreateUniformBuffer(`instanced_${material.id}`, packed);
@@ -812,17 +784,14 @@ _describeLayouts(layouts) {
             return groups;
         }
 
-        // Cloud / custom pipeline path using explicit layout spec
         if (material.bindGroupLayoutSpec && !materialName.includes('orbital') && !materialName.includes('sphere')) {
             return this._createBindGroupsFromSpec(material, uniforms);
         }
 
-        // ORBITAL SPHERE: Special bind group creation
         if (materialName.includes('orbital') || materialName.includes('sphere')) {
             return this._createOrbitalSphereBindGroups(material, uniforms);
         }
 
-        // TERRAIN: Standard bind group creation
         return this._createTerrainBindGroups(material, uniforms);
     }
 
@@ -834,6 +803,7 @@ _describeLayouts(layouts) {
             if (explicit && this._samplerCache.has(explicit)) return this._samplerCache.get(explicit);
             if (samplerDesc?.type === 'nearest') return this._samplerCache.get('nearest');
             if (samplerDesc?.type === 'shadow') return this._samplerCache.get('shadow');
+            if (samplerDesc?.type === 'non-filtering') return this._samplerCache.get('nearest');
             return this._samplerCache.get('linear');
         };
 
@@ -881,13 +851,12 @@ _describeLayouts(layouts) {
 
     _createOrbitalSphereBindGroups(material, uniforms) {
         const groups = [];
-        
+
         console.log('Creating orbital sphere bind groups');
-        
-        // Group 0: Uniforms
+
         const vertU = this._getOrCreateUniformBuffer('vert_orbital', this._packOrbitalVertexUniforms(uniforms));
         const fragU = this._getOrCreateUniformBuffer('frag_orbital', this._packOrbitalFragmentUniforms(uniforms));
-        
+
         const group0 = this.device.createBindGroup({
             label: 'OrbitalSphere-BindGroup0',
             layout: material._gpuPipeline.bindGroupLayouts[0],
@@ -897,29 +866,28 @@ _describeLayouts(layouts) {
             ]
         });
         groups.push(group0);
-        
-        // Group 1: Texture + Sampler
+
         const planetTex = uniforms.planetTexture?.value;
-        
+
         if (!planetTex) {
             console.error('No planetTexture uniform found!');
         } else if (!planetTex._gpuTexture) {
             console.error('planetTexture has no GPU texture!');
         }
-        
-        const textureView = (planetTex && planetTex._gpuTexture && planetTex._gpuTexture.view) 
-            ? planetTex._gpuTexture.view 
+
+        const textureView = (planetTex && planetTex._gpuTexture && planetTex._gpuTexture.view)
+            ? planetTex._gpuTexture.view
             : this._getOrCreateDummyTexture().createView();
-        
+
         const sampler = this._samplerCache.get('linear');
-        
+
         console.log('  Binding texture:', {
             hasTexture: !!planetTex,
             hasGPUTexture: !!planetTex?._gpuTexture,
             hasView: !!planetTex?._gpuTexture?.view,
             usingDummy: textureView === this._getOrCreateDummyTexture().createView()
         });
-        
+
         const group1 = this.device.createBindGroup({
             label: 'OrbitalSphere-BindGroup1',
             layout: material._gpuPipeline.bindGroupLayouts[1],
@@ -929,11 +897,12 @@ _describeLayouts(layouts) {
             ]
         });
         groups.push(group1);
-        
+
         console.log('Orbital sphere bind groups created');
-        
+
         return groups;
     }
+
     _packOrbitalVertexUniforms(uniforms) {
         const data = new Float32Array(64);
         let offset = 0;
@@ -973,11 +942,9 @@ _describeLayouts(layouts) {
         return data;
     }
 
-
-
     _createTerrainBindGroups(material, uniforms) {
         const groups = [];
-    
+
         const getView = (name) => {
             const tex = uniforms[name]?.value;
             if (tex && tex._gpuTexture && tex._gpuTexture.view) {
@@ -985,8 +952,7 @@ _describeLayouts(layouts) {
             }
             return this._getOrCreateDummyTexture().createView();
         };
-    
-        // Group 0: Uniforms
+
         const vertKey = `vert_${material.id}`;
         const fragKey = `frag_${material.id}`;
         const vertU = this._getOrCreateUniformBuffer(vertKey, this._packVertexUniforms(uniforms));
@@ -998,16 +964,14 @@ _describeLayouts(layouts) {
                 { binding: 1, resource: { buffer: fragU } }
             ]
         }));
-    
-        // Group 1: Chunk textures
+
         const chunkTextureNames = ['heightTexture', 'normalTexture', 'tileTexture', 'splatDataMap', 'macroMaskTexture'];
         const g1Entries = chunkTextureNames.map((name, i) => ({ binding: i, resource: getView(name) }));
         groups.push(this.device.createBindGroup({
             layout: material._gpuPipeline.bindGroupLayouts[1],
             entries: g1Entries
         }));
-    
-        // Group 2: Atlases & Lookups
+
         const g2Entries = [
             { binding: 0, resource: getView('atlasTexture') },
             { binding: 1, resource: getView('level2AtlasTexture') },
@@ -1021,16 +985,8 @@ _describeLayouts(layouts) {
             layout: material._gpuPipeline.bindGroupLayouts[2],
             entries: g2Entries
         }));
-    
-        // Group 3: Shadows, Clusters, and Transmittance LUT
+
         const g3Entries = [
-            { binding: 0, resource: getView('shadowMapCascade0') },
-            { binding: 1, resource: getView('shadowMapCascade1') },
-            { binding: 2, resource: getView('shadowMapCascade2') },
-            { binding: 3, resource: this._samplerCache.get('shadow') },
-            { binding: 4, resource: getView('clusterDataTexture') },
-            { binding: 5, resource: getView('lightDataTexture') },
-            { binding: 6, resource: getView('lightIndicesTexture') },
             { binding: 7, resource: getView('transmittanceLUT') },
             { binding: 8, resource: this._samplerCache.get('linear') }
         ];
@@ -1038,175 +994,148 @@ _describeLayouts(layouts) {
             layout: material._gpuPipeline.bindGroupLayouts[3],
             entries: g3Entries
         }));
-    
+
         return groups;
     }
 
- 
     _packVertexUniforms(uniforms) {
-        // Vertex uniform buffer layout (must match VertexUniforms struct in shader):
-        //
-        // offset 0-47:   3x mat4x4 (model, view, projection) = 48 floats
-        // offset 48-51:  chunkOffset (vec2), chunkSize (f32), macroScale (f32) = 4 floats
-        // offset 52-55:  planetRadius (f32), padding (3 floats) = 4 floats
-        // offset 56-59:  planetOrigin (vec3), padding (1 float) = 4 floats
-        // offset 60-63:  chunkFace (i32), chunkLocation (vec2), chunkSizeUV (f32) = 4 slots
-        // offset 64-67:  useAtlasMode (f32), atlasUVOffset (vec2), atlasUVScale (f32) = 4 floats
-        // offset 68-71:  heightScale (f32), atlasTextureSize (f32), padding (2 floats) = 4 floats
-        //
-        // Total: 72 floats = 288 bytes (we round up to 320 for alignment)
-        
+        // Fixed-size packing for terrain uniforms (80 floats / 320 bytes), including useInstancing slot
         const buffer = new ArrayBuffer(80 * 4);
         const data = new Float32Array(buffer);
         const intView = new Int32Array(buffer);
         let offset = 0;
-        
-        // Helper to write a mat4x4
+
         const writeMat = (m) => {
             if (m && m.elements) {
                 data.set(m.elements, offset);
             } else {
-                // Identity matrix
                 data.set([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1], offset);
             }
             offset += 16;
         };
-        
-        // === Matrices (48 floats) ===
-        writeMat(uniforms.modelMatrix?.value);      // offset 0-15
-        writeMat(uniforms.viewMatrix?.value);       // offset 16-31
-        writeMat(uniforms.projectionMatrix?.value); // offset 32-47
-        
-        // === Basic chunk params (4 floats) ===
+
+        writeMat(uniforms.modelMatrix?.value);
+        writeMat(uniforms.viewMatrix?.value);
+        writeMat(uniforms.projectionMatrix?.value);
+
         data[offset++] = uniforms.chunkOffset?.value?.x || 0;
         data[offset++] = uniforms.chunkOffset?.value?.y || 0;
         data[offset++] = uniforms.chunkSize?.value || 128;
         data[offset++] = uniforms.macroScale?.value || 0.1;
-        
-        // === Planet params (4 floats) ===
+
         data[offset++] = uniforms.planetRadius?.value || 50000;
-        data[offset++] = 0; // padding
-        data[offset++] = 0; // padding
-        data[offset++] = 0; // padding
-        
-        // === planetOrigin vec3 + padding (4 floats) ===
+        data[offset++] = 0;
+        data[offset++] = 0;
+        data[offset++] = 0;
+
         const origin = uniforms.planetOrigin?.value;
         data[offset++] = origin?.x || 0;
         data[offset++] = origin?.y || 0;
         data[offset++] = origin?.z || 0;
-        data[offset++] = 0; // padding
-        
-        // === Chunk face/location (int for face, pad, then vec2) ===
+        data[offset++] = 0;
+
         intView[offset] = (uniforms.chunkFace?.value ?? -1);
         offset++;
-        data[offset++] = 0; // pad to align vec2
+        data[offset++] = 0;
         data[offset++] = uniforms.chunkLocation?.value?.x || 0;
         data[offset++] = uniforms.chunkLocation?.value?.y || 0;
         data[offset++] = uniforms.chunkSizeUV?.value || 0.0625;
-        
-        // === Atlas UV params (4 floats) ===
+
         data[offset++] = uniforms.useAtlasMode?.value || 0;
         data[offset++] = uniforms.atlasUVOffset?.value?.x || 0;
         data[offset++] = uniforms.atlasUVOffset?.value?.y || 0;
         data[offset++] = uniforms.atlasUVScale?.value || 1.0;
-        
-        // === Height/atlas size (4 floats) ===
+        data[offset++] = uniforms.useInstancing?.value || 0;
+
         data[offset++] = uniforms.heightScale?.value || 50.0;
         const atlasSizeVal = uniforms.atlasTextureSize?.value;
         data[offset++] = typeof atlasSizeVal === 'object' ? (atlasSizeVal?.x || atlasSizeVal?.width || 129) : (atlasSizeVal || 129);
-        data[offset++] = 0; // padding
-        data[offset++] = 0; // padding
-        
+        data[offset++] = 0;
+        data[offset++] = 0;
+
         return data;
     }
-
 
     _packFragmentUniforms(uniforms) {
         const buf = new ArrayBuffer(512);
         const f32 = new Float32Array(buf);
         const i32 = new Int32Array(buf);
-    
-        // Existing uniforms (0-32)
+
         const cam = uniforms.cameraPosition?.value;
         f32[0] = cam?.x ?? 0;
         f32[1] = cam?.y ?? 0;
         f32[2] = cam?.z ?? 0;
         f32[3] = uniforms.time?.value ?? 0;
-    
+
         f32[4] = uniforms.chunkOffset?.value?.x ?? 0;
         f32[5] = uniforms.chunkOffset?.value?.y ?? 0;
         f32[6] = uniforms.chunkWidth?.value ?? uniforms.chunkSize?.value ?? 128;
         f32[7] = uniforms.chunkHeight?.value ?? uniforms.chunkSize?.value ?? 128;
-    
+
         const sunDir = uniforms.sunLightDirection?.value;
         f32[8] = sunDir?.x ?? 0;
         f32[9] = sunDir?.y ?? 1;
         f32[10] = sunDir?.z ?? 0;
         f32[11] = 0;
-    
+
         const sunCol = uniforms.sunLightColor?.value;
         f32[12] = sunCol?.r ?? 1;
         f32[13] = sunCol?.g ?? 1;
         f32[14] = sunCol?.b ?? 1;
         f32[15] = 0;
-    
+
         const amb = uniforms.ambientLightColor?.value;
         f32[16] = amb?.r ?? 0.3;
         f32[17] = amb?.g ?? 0.3;
         f32[18] = amb?.b ?? 0.4;
         f32[19] = uniforms.enableSplatLayer?.value ?? 1;
-    
+
         f32[20] = uniforms.enableMacroLayer?.value ?? 1;
         i32[21] = uniforms.geometryLOD?.value ?? 0;
         i32[22] = uniforms.currentSeason?.value ?? 0;
         i32[23] = uniforms.nextSeason?.value ?? 1;
-    
+
         f32[24] = uniforms.seasonTransition?.value ?? 0;
         const atlasSize = uniforms.atlasTextureSize?.value;
         f32[25] = typeof atlasSize === 'object' ? (atlasSize?.x ?? atlasSize?.width ?? 1024) : (atlasSize ?? 1024);
         f32[26] = 0;
         f32[27] = 0;
-    
+
         const atlasOffset = uniforms.atlasUVOffset?.value;
         f32[28] = atlasOffset?.x ?? 0;
         f32[29] = atlasOffset?.y ?? 0;
         f32[30] = uniforms.atlasUVScale?.value ?? 1;
         i32[31] = uniforms.useAtlasMode?.value ?? 0;
-    
+
         f32[32] = uniforms.isFeature?.value ?? 0;
         f32[33] = uniforms.aerialPerspectiveEnabled?.value ?? 1.0;
         f32[34] = 0;
         f32[35] = 0;
-    
-        // Planet center (vec3 + padding)
+
         const planetCenter = uniforms.planetCenter?.value;
         f32[36] = planetCenter?.x ?? 0;
         f32[37] = planetCenter?.y ?? 0;
         f32[38] = planetCenter?.z ?? 0;
         f32[39] = uniforms.atmospherePlanetRadius?.value ?? 50000;
-    
-        // Atmosphere params
+
         f32[40] = uniforms.atmosphereRadius?.value ?? 60000;
         f32[41] = uniforms.atmosphereScaleHeightRayleigh?.value ?? 800;
         f32[42] = uniforms.atmosphereScaleHeightMie?.value ?? 120;
         f32[43] = uniforms.atmosphereMieAnisotropy?.value ?? 0.8;
-    
-        // Rayleigh scattering (vec3) + Mie scattering
+
         const rayleigh = uniforms.atmosphereRayleighScattering?.value;
         f32[44] = rayleigh?.x ?? 5.5e-5;
         f32[45] = rayleigh?.y ?? 13.0e-5;
         f32[46] = rayleigh?.z ?? 22.4e-5;
         f32[47] = uniforms.atmosphereMieScattering?.value ?? 21e-5;
-    
-        // Sun intensity + padding
+
         f32[48] = uniforms.atmosphereSunIntensity?.value ?? 20.0;
         f32[49] = 0;
         f32[50] = 0;
         f32[51] = 0;
-    
+
         return f32;
     }
-    
 
     _packDebugUniforms(uniforms) {
         const data = new Float32Array(32);
@@ -1248,24 +1177,21 @@ _describeLayouts(layouts) {
         ]);
 
         const check = (name) => {
-            if (skip.has(name)) return; // treat lighting/shadow textures as optional
+            if (skip.has(name)) return;
             const tex = uniforms[name]?.value;
             if (!tex) return;
-    
+
             if (tex._gpuTexture && tex._gpuTexture.texture && tex._gpuTexture.view) {
-                // Texture is already on GPU - either GPU-only or previously uploaded
-                // No action needed
                 return;
             }
-    
+
             if (tex._needsUpload && (tex.data || tex.image)) {
                 this.updateTexture(tex);
             } else if (!tex._gpuTexture) {
-                // Texture has no GPU resource and no way to create one
                 console.warn(`Warning: Texture ${name} missing GPU resource and CPU data`);
             }
         };
-    
+
         ['heightTexture', 'normalTexture', 'tileTexture', 'splatDataMap', 'macroMaskTexture'].forEach(check);
         ['atlasTexture', 'level2AtlasTexture', 'tileTypeLookup', 'macroTileTypeLookup', 'numVariantsTex'].forEach(check);
         ['shadowMapCascade0', 'shadowMapCascade1', 'shadowMapCascade2',
@@ -1295,14 +1221,12 @@ _describeLayouts(layouts) {
         setVBuf(1, geometry.attributes.get('normal'));
         setVBuf(2, geometry.attributes.get('uv'));
 
-        // Bind any custom instanced/extra attributes with explicit slots
         for (const [name, attr] of geometry.attributes) {
             if (attr.stepMode === 'instance' && attr.slot !== undefined) {
                 setVBuf(attr.slot, attr);
             }
         }
 
-        // Handle Instance Matrix Buffers
         if (material.vertexShader.includes('instanceMatrix') || material.vertexShader.includes('@location(4)')) {
             const instanceMatrix = geometry.attributes.get('instanceMatrix');
             if (instanceMatrix) {
@@ -1313,7 +1237,6 @@ _describeLayouts(layouts) {
             }
         }
 
-        // Safe Draw Count (Handle Zero/Infinity)
         let count = geometry.drawRange.count;
         if (count === Infinity) {
             if (geometry.index) count = geometry.index.count;
@@ -1321,7 +1244,6 @@ _describeLayouts(layouts) {
             else count = 0;
         }
 
-        // Guard against 0 vertex draws
         if (count === 0) return;
 
         const instanceCount = geometry.instanceCount || 1;
@@ -1446,6 +1368,7 @@ _describeLayouts(layouts) {
     }
 
     _getTextureFormat(fmt) {
+        const key = typeof fmt === 'string' ? fmt : fmt?.format;
         const map = {
             [TextureFormat.RGBA8]: 'rgba8unorm',
             [TextureFormat.RGBA16F]: 'rgba16float',
@@ -1454,9 +1377,11 @@ _describeLayouts(layouts) {
             [TextureFormat.R16F]: 'r16float',
             [TextureFormat.R32F]: 'r32float',
             [TextureFormat.DEPTH24]: 'depth24plus',
-            [TextureFormat.DEPTH32F]: 'depth32float'
+            [TextureFormat.DEPTH32F]: 'depth32float',
+            'rgba16float': 'rgba16float',
+            'rgba16f': 'rgba16float'
         };
-        return map[fmt] || 'rgba8unorm';
+        return map[key] || 'rgba8unorm';
     }
 
     getAPIName() {
@@ -1464,7 +1389,6 @@ _describeLayouts(layouts) {
     }
 
     dispose() {
-        // Cleanup resources
         if (this._depthTexture) {
             this._depthTexture.destroy();
             this._depthTexture = null;
@@ -1475,17 +1399,12 @@ _describeLayouts(layouts) {
             this._dummyTexture = null;
         }
 
-        // Clear caches
         for (const buffer of this._bufferCache.values()) {
             if (buffer.gpuBuffer) buffer.gpuBuffer.destroy();
         }
         this._bufferCache.clear();
 
-        for (const sampler of this._samplerCache.values()) {
-            // Samplers don't need explicit destruction
-        }
         this._samplerCache.clear();
-
         this._pipelineCache.clear();
         this._bindGroupLayoutCache.clear();
 

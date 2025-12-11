@@ -1,5 +1,5 @@
 
-import { getAerialPerspectiveWGSL } from '../../../../atmosphere/shaders/aerialPerspective.js';
+import { getAerialPerspectiveWGSL } from '../../../../renderer/atmosphere/shaders/aerialPerspectiveCommon.js';
 
 export function buildTerrainChunkFragmentShader(options = {}) {
     const maxLightIndices = options.maxLightIndices || 8192;

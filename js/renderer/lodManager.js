@@ -4,6 +4,7 @@ export class LODManager {
         this.isSphericalMode = true;//config.isSphericalMode || false;
         this.planetConfig = config.planetConfig || null;
         this.sphericalMapper = config.sphericalMapper || null;
+        this.atlasConfig = config.atlasConfig || null;
         
         this.lodDistances = config.lodDistances || this.getDefaultDistances();
         this.lodSettings = this.initializeLODSettings();

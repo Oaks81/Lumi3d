@@ -63,7 +63,9 @@ export class TerrainMaterialBuilder {
                 planetConfig = null,
                 useAtlasMode = false,
                 uvTransform = null,
-                heightScale = 1.0
+                heightScale = 1.0,
+                lod = 0,
+                enableInstancing = false
             } = options;
         
             if (!backend) {
@@ -90,7 +92,7 @@ export class TerrainMaterialBuilder {
             const builders = await this._loadShaderBuilders(apiName);
         
             const shaderOptions = { maxLightIndices: 8192 };
-            const vertexShader = builders.buildTerrainChunkVertexShader();
+            const vertexShader = builders.buildTerrainChunkVertexShader({ instanced: enableInstancing });
             const fragmentShader = builders.buildTerrainChunkFragmentShader(shaderOptions);
         
             const isSpherical = faceIndex >= 0 && faceIndex <= 5;
@@ -171,13 +173,14 @@ export class TerrainMaterialBuilder {
 
             // === LOD SETTINGS ===
             lodLevel: { value: 0 },
-            geometryLOD: { value: 0 },
+            geometryLOD: { value: lod },
             splatLODBias: { value: 0.0 },
             macroLODBias: { value: 0.0 },
             detailFade: { value: 1.0 },
             enableSplatLayer: { value: 1.0 },
             enableMacroLayer: { value: 1.0 },
             enableClusteredLights: { value: 1.0 },
+            useInstancing: { value: enableInstancing ? 1.0 : 0.0 },
 
             // === CHUNK TEXTURES ===
             heightTexture: { value: cachedTextures.height },
@@ -299,6 +302,12 @@ export class TerrainMaterialBuilder {
                     attributes: [{ shaderLocation: 2, offset: 0, format: 'float32x2' }] 
                 }
             ];
+            if (enableInstancing) {
+                vertexLayout.push(
+                    { arrayStride: 16, stepMode: 'instance', attributes: [{ shaderLocation: 3, offset: 0, format: 'float32x4' }] },
+                    { arrayStride: 16, stepMode: 'instance', attributes: [{ shaderLocation: 4, offset: 0, format: 'float32x4' }] }
+                );
+            }
         }
 
         const material = new Material({
@@ -310,7 +319,7 @@ export class TerrainMaterialBuilder {
             side: 'double',  // Changed from 'double' for proper backface culling
             depthTest: true,
             depthWrite: true,
-            isInstanced: false,
+            isInstanced: enableInstancing,
             vertexLayout: vertexLayout,
         });
 

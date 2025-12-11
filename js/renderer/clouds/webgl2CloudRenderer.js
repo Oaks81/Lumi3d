@@ -28,7 +28,8 @@ export class WebGL2CloudRenderer extends CloudRenderer {
                 fogDensity: { value: 0.0001 },
                 time: { value: 0 },
                 cloudAnisotropy: { value: this.config.cloudAnisotropy },
-                froxelTexture: { value: this.froxelGrid.getTexture() }
+                froxelTexture: { value: this.froxelGrid.getTexture() },
+                cloudBaseColor: { value: new THREE.Vector3(0.9, 0.95, 1.0) }
             },
             transparent: true,
             depthTest: false,
@@ -103,6 +104,7 @@ export class WebGL2CloudRenderer extends CloudRenderer {
         uniform float fogDensity;
         uniform float time;
         uniform float cloudAnisotropy;
+        uniform vec3 cloudBaseColor;
         uniform sampler2D froxelTexture;
 
         const float PI = 3.14159265359;
@@ -161,7 +163,7 @@ export class WebGL2CloudRenderer extends CloudRenderer {
                 if (density <= 1e-5) continue;
 
                 float phase = mix(fogPhase, cloudPhase, clamp(cldLow + cldHigh, 0.0, 1.0));
-                vec3 scatter = vec3(density * phase) * (0.65 + 0.6 * cell.a);
+                vec3 scatter = vec3(density * phase) * (0.65 + 0.6 * cell.a) * cloudBaseColor;
 
                 accum += trans * scatter * stepSize;
                 trans *= exp(-density * stepSize * 1.25);

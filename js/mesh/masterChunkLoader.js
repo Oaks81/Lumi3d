@@ -3,6 +3,7 @@ import { WaterMeshManager } from './water/WaterMeshManager.js';
 import { ChunkLoadQueue } from './chunkLoadQueue.js';
 import { ChunkKey } from '../world/chunkKey.js';
 import { TextureAtlasKey } from '../world/textureAtlasKey.js';
+import { StreamedFeatureManager } from './streamed/StreamedFeatureManager.js';
 
 export class MasterChunkLoader {
 
@@ -33,6 +34,15 @@ export class MasterChunkLoader {
             uniformManager,
             chunkSize
         );
+
+        this.streamedFeatureManager = backend ? new StreamedFeatureManager(
+            backend,
+            this.terrainMeshManager,
+            textureManager,
+            uniformManager,
+            lodManager,
+            { chunkSize }
+        ) : null;
 
         this.chunkLifecycle = new Map();
         this.lastCacheCleanup = 0;
@@ -72,6 +82,9 @@ export class MasterChunkLoader {
 
     async initialize() {
         console.log('MasterChunkLoader initialized');
+        if (this.streamedFeatureManager) {
+            await this.streamedFeatureManager.initialize();
+        }
     }
 
     /**
@@ -82,6 +95,15 @@ export class MasterChunkLoader {
         this.queueChunkOperations(cameraPosition, terrain);
         
         await this.processQueues(terrain, planetConfig, sphericalMapper);
+
+        if (this.streamedFeatureManager) {
+            this.streamedFeatureManager.update(cameraPosition, terrain, deltaTime || 0);
+        }
+
+        // Refresh LODs for already-loaded chunks (small time budget)
+        if (this.terrainMeshManager) {
+            this.terrainMeshManager.updateLODs(cameraPosition, planetConfig, sphericalMapper, 4);
+        }
         
         const now = performance.now();
         if (now - this.lastCacheCleanup > this.cacheCleanupInterval) {
@@ -210,9 +232,52 @@ export class MasterChunkLoader {
         let hasTextures = false;
         let useAtlas = false;
         let atlasKey = null;
+        const lodCfg = this.lodManager?.atlasConfig || this.textureCache?.lodAtlasConfig;
+
+        // Precompute LOD once so we can request matching atlas if available
+        let lodLevel = typeof chunkData.lodLevel === 'number'
+            ? chunkData.lodLevel
+            : this.lodManager.getLODForChunkKey(
+                chunkKeyStr,
+                cameraPosition,
+                this.altitudeZoneManager,
+                planetConfig
+            );
+        // Clamp to available atlas LOD range
+        if (lodCfg?.maxLODLevels) {
+            lodLevel = Math.min(lodLevel, lodCfg.maxLODLevels - 1);
+        }
+        chunkData.lodLevel = lodLevel;
+
+        // Prefer LOD-aware atlas lookup first
+        if (this.textureCache.getLODAtlasForChunk && lodCfg) {
+            let atlasLOD = lodLevel;
+            let atlasData = this.textureCache.getLODAtlasForChunk(chunkX, chunkY, 'height', atlasLOD, face, lodCfg);
+            // Fallback to nearest lower LOD if specific one missing
+            if (!atlasData) {
+                for (let l = atlasLOD - 1; l >= 0 && !atlasData; l--) {
+                    atlasData = this.textureCache.getLODAtlasForChunk(chunkX, chunkY, 'height', l, face, lodCfg);
+                    if (atlasData) {
+                        atlasLOD = l;
+                        console.warn(`[MasterChunkLoader] Falling back to LOD ${atlasLOD} atlas for ${chunkKeyStr}`);
+                    }
+                }
+            }
+            if (atlasData) {
+                hasTextures = true;
+                useAtlas = true;
+                atlasKey = atlasData.atlasKey;
+                chunkData.useAtlasMode = true;
+                chunkData.atlasKey = atlasData.atlasKey;
+                chunkData.uvTransform = atlasData.uvTransform;
+                chunkData.atlasLOD = atlasLOD;
+            }
+            // If hierarchical atlases are configured but missing entirely, skip until ready
+            if (!hasTextures) return;
+        }
 
         // Check for Atlas existence first (Preferred)
-        if (this.textureCache.hasAtlasForChunk) {
+        if (!hasTextures && !lodCfg && this.textureCache.hasAtlasForChunk) {
             // "height" is the minimum required texture type
             if (this.textureCache.hasAtlasForChunk(chunkX, chunkY, 'height', null, face)) {
                 hasTextures = true;
@@ -260,13 +325,7 @@ export class MasterChunkLoader {
             return;
         }
 
-        const lodLevel = this.lodManager.getLODForChunkKey(
-            chunkKeyStr, 
-            cameraPosition, 
-            this.altitudeZoneManager,
-            planetConfig
-        );
-        chunkData.lodLevel = lodLevel;
+        // LOD already computed above; keep existing value
 
         // Load Water (Optional)
         const waterMeshes = await this.loadWaterFeatures(

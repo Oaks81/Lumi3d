@@ -1,7 +1,7 @@
 // js/texture/textureCache.js
 
-
 import { TextureAtlasKey } from '../world/textureAtlasKey.js';
+import { LODTextureAtlasKey } from '../world/lodTextureAtlasKey.js';
 import { DataTextureConfig, DEFAULT_ATLAS_CONFIG } from '../world/dataTextureConfiguration.js';
 
 export class TextureCache {
@@ -14,8 +14,16 @@ export class TextureCache {
         // Track atlas usage: Map<atlasKeyString, Set<chunkKeyString>>
         this.atlasUsage = new Map();
         
-        // Default atlas config (can be overridden)
+        // Default atlas configs (can be overridden)
         this.atlasConfig = DEFAULT_ATLAS_CONFIG;
+        this.lodAtlasConfig = null;
+
+        // LOD residency / hysteresis policy: min time in cache and eviction bias per LOD
+        // Index = LOD level. Values in milliseconds / bias units added to eviction priority.
+        this.lodResidencyPolicy = {
+            minTTLsMs: [5000, 15000, 60000, 300000, 600000], // keep coarse longer
+            bias:      [0,    1000,  5000,  20000,   50000]  // larger bias = harder to evict
+        };
         
         this.stats = {
             hits: 0,
@@ -29,11 +37,138 @@ export class TextureCache {
     }
 
     /**
+     * Set the LOD atlas configuration
+     */
+    setLODAtlasConfig(config) {
+        this.lodAtlasConfig = config;
+        console.log('[TextureCache] LOD atlas config set:', {
+            worldCoverage: config.worldCoverage,
+            baseTextureSize: config.baseTextureSize,
+            maxLODLevels: config.maxLODLevels
+        });
+    }
+
+    /**
+     * Override LOD residency/hysteresis policy
+     * @param {{minTTLsMs:number[], bias:number[]}} policy 
+     */
+    setLODResidencyPolicy(policy = {}) {
+        if (policy.minTTLsMs) this.lodResidencyPolicy.minTTLsMs = policy.minTTLsMs;
+        if (policy.bias) this.lodResidencyPolicy.bias = policy.bias;
+        console.log('[TextureCache] LOD residency policy set:', this.lodResidencyPolicy);
+    }
+
+    /**
      * Set the atlas configuration for this cache
      */
     setAtlasConfig(config) {
         this.atlasConfig = config;
         console.log('[TextureCache] Atlas config set: ' + config.textureSize + 'x' + config.textureSize + ', ' + config.chunksPerAxis + ' chunks per axis');
+    }
+
+    /**
+     * Store a LOD atlas texture
+     * 
+     * @param {LODTextureAtlasKey} atlasKey - LOD atlas key
+     * @param {string} type - Texture type (height, normal, tile, etc.)
+     * @param {Texture} texture - The texture to store
+     * @param {number} sizeBytes - Size in bytes
+     */
+    setLODAtlas(atlasKey, type, texture, sizeBytes, arrayInfo = null) {
+        const key = `${type}_${atlasKey.toString()}`;
+        
+        // Handle replacement
+        if (this.cache.has(key)) {
+            const old = this.cache.get(key);
+            this.currentSizeBytes -= old.sizeBytes;
+            
+            if (old.texture?._gpuTexture?.texture) {
+                old.texture._gpuTexture.texture.destroy();
+            }
+            if (old.texture?.dispose) {
+                old.texture.dispose();
+            }
+        }
+        
+        const entry = {
+            texture,
+            sizeBytes,
+            lastAccess: performance.now(),
+            created: performance.now(),
+            type,
+            isAtlas: true,
+            isLODAtlas: true,
+            lod: atlasKey.lod,
+            atlasKey: atlasKey,
+            isGPUOnly: texture._isGPUOnly || false,
+            arrayInfo: arrayInfo || null
+        };
+        
+        this.cache.set(key, entry);
+        this.currentSizeBytes += sizeBytes;
+        
+        // Track usage
+        const atlasKeyStr = atlasKey.toString();
+        if (!this.atlasUsage.has(atlasKeyStr)) {
+            this.atlasUsage.set(atlasKeyStr, new Set());
+        }
+        
+        this.evictIfNeeded();
+    }
+
+    /**
+     * Get LOD atlas texture for a chunk at specified LOD level
+     * 
+     * @param {number} chunkX - Chunk X coordinate
+     * @param {number} chunkY - Chunk Y coordinate
+     * @param {string} type - Texture type
+     * @param {number} lod - LOD level
+     * @param {number|null} face - Cube face for spherical
+     * @param {Object} config - LOD atlas config
+     * @returns {Object|null} {texture, atlasKey, uvTransform} or null
+     */
+    getLODAtlasForChunk(chunkX, chunkY, type, lod, face = null, config = null) {
+        const cfg = config || this.lodAtlasConfig;
+        if (!cfg) {
+            console.warn('[TextureCache] No LOD atlas config set');
+            return null;
+        }
+        
+        // Create atlas key for this chunk at the specified LOD
+        const atlasKey = LODTextureAtlasKey.fromChunkCoords(chunkX, chunkY, lod, face, cfg);
+        const cacheKey = `${type}_${atlasKey.toString()}`;
+        
+        const entry = this.cache.get(cacheKey);
+        if (!entry) {
+            this.stats.atlasMisses++;
+            return null;
+        }
+        
+        this.stats.atlasHits++;
+        entry.lastAccess = performance.now();
+        
+        // Calculate UV transform
+        const uvTransform = cfg.getChunkUVTransform(chunkX, chunkY, lod);
+        
+        return {
+            texture: entry.texture,
+            atlasKey: atlasKey,
+            uvTransform: uvTransform,
+            lod: lod
+        };
+    }
+
+    /**
+     * Check if LOD atlas exists for a chunk
+     */
+    hasLODAtlasForChunk(chunkX, chunkY, type, lod, face = null, config = null) {
+        const cfg = config || this.lodAtlasConfig;
+        if (!cfg) return false;
+        
+        const atlasKey = LODTextureAtlasKey.fromChunkCoords(chunkX, chunkY, lod, face, cfg);
+        const cacheKey = `${type}_${atlasKey.toString()}`;
+        
+        return this.cache.has(cacheKey);
     }
 
     makeKey(textureXOrAtlasKey, textureY, type) {
@@ -347,6 +482,8 @@ export class TextureCache {
     evictIfNeeded() {
         if (this.currentSizeBytes <= this.maxSizeBytes) return;
 
+        const now = performance.now();
+
         // Sort by last access time (oldest first)
         const entries = Array.from(this.cache.entries())
             .map(([key, entry]) => {
@@ -362,6 +499,21 @@ export class TextureCache {
                     if (activeChunks && activeChunks.size > 0) {
                         // Boost priority (less likely to evict) if chunks are using it
                         priority += 1000000 * activeChunks.size;
+                    }
+                }
+
+                // Apply LOD residency hysteresis for LOD atlases
+                if (entry.isLODAtlas && typeof entry.lod === 'number') {
+                    const minTTLs = this.lodResidencyPolicy?.minTTLsMs || [];
+                    const biasArr = this.lodResidencyPolicy?.bias || [];
+                    const minTTL = minTTLs[entry.lod] ?? 0;
+                    const bias = biasArr[entry.lod] ?? 0;
+                    const age = now - entry.lastAccess;
+                    // Before minTTL, make it very unlikely to evict; after, apply bias
+                    if (age < minTTL) {
+                        priority += 1e12; // effectively pin unless memory crisis
+                    } else {
+                        priority += bias;
                     }
                 }
                 

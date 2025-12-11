@@ -77,17 +77,43 @@ _initUniformSetters() {
     };
 }
     async initialize() {
-        this.gl = this.canvas.getContext('webgl2', {
+        if (!this.canvas) {
+            throw new Error('WebGL2: No canvas provided');
+        }
+        if (!(this.canvas instanceof HTMLCanvasElement)) {
+            throw new Error('WebGL2: Invalid canvas element');
+        }
+
+        const contextOpts = {
             antialias: true,
             alpha: false,
             depth: true,
             stencil: false,
             powerPreference: 'high-performance',
             preserveDrawingBuffer: false
-        });
-        
+        };
+
+        // Try multiple option sets to maximize the chance of getting a context
+        const optSets = [
+            contextOpts,
+            { ...contextOpts, alpha: true },
+            {}
+        ];
+        for (const opts of optSets) {
+            this.gl = this.canvas.getContext('webgl2', opts) ||
+                      this.canvas.getContext('experimental-webgl2', opts) ||
+                      this.canvas.getContext('webgl', opts);
+            if (this.gl) {
+                if (opts !== contextOpts) {
+                    console.warn('WebGL2 context created with fallback options:', opts);
+                }
+                break;
+            }
+        }
+
         if (!this.gl) {
-            throw new Error('WebGL2 not supported');
+            const canvasInfo = `canvas: ${this.canvas.width}x${this.canvas.height}, id=${this.canvas.id}`;
+            throw new Error(`WebGL2 not supported (context creation failed). ${canvasInfo}`);
         }
         
         this.context = this.gl;
@@ -895,5 +921,92 @@ _setUniforms(material, additionalUniforms, program) {
     
     _isPowerOfTwo(value) {
         return (value & (value - 1)) === 0;
+    }
+
+    // =========================================================================
+    // Instancing-aware overrides (appended to ease merges)
+    // =========================================================================
+    _bindGeometry(geometry, program) {
+        const gl = this.gl;
+        
+        for (const [name, attribute] of geometry.attributes) {
+            const location = program.attributeLocations[name];
+            if (location === undefined || location === -1) continue;
+            
+            const bufferKey = name + '_' + geometry.id;
+            let buffer = this._bufferCache.get(bufferKey);
+            
+            if (!buffer || geometry._needsUpload) {
+                if (buffer) {
+                    gl.deleteBuffer(buffer.glBuffer);
+                }
+                buffer = this.createBuffer(attribute.data);
+                this._bufferCache.set(bufferKey, buffer);
+            }
+            
+            gl.bindBuffer(gl.ARRAY_BUFFER, buffer.glBuffer);
+            gl.enableVertexAttribArray(location);
+            gl.vertexAttribPointer(
+                location,
+                attribute.itemSize,
+                gl.FLOAT,
+                attribute.normalized,
+                0,
+                0
+            );
+            const divisor = attribute.stepMode === 'instance' ? 1 : 0;
+            gl.vertexAttribDivisor(location, divisor);
+        }
+    }
+
+    draw(geometry, material, uniforms = {}) {
+        const gl = this.gl;
+        
+        if (material._needsCompile || !material._gpuProgram) {
+            this.compileShader(material);
+        }
+        
+        const program = material._gpuProgram;
+        
+        if (this._currentProgram !== program.program) {
+            gl.useProgram(program.program);
+            this._currentProgram = program.program;
+        }
+        
+        this._bindGeometry(geometry, program);
+        this._setUniforms(material, uniforms, program);
+        this._setState(material);
+        
+        const instanceCount = Math.max(geometry.instanceCount || 1, 1);
+        
+        if (geometry.index) {
+            const indexKey = 'index_' + geometry.id;
+            let indexBuffer = this._bufferCache.get(indexKey);
+            
+            if (!indexBuffer || geometry._needsUpload) {
+                if (indexBuffer) {
+                    gl.deleteBuffer(indexBuffer.glBuffer);
+                }
+                indexBuffer = this.createBuffer(geometry.index.data);
+                this._bufferCache.set(indexKey, indexBuffer);
+            }
+            
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer.glBuffer);
+            
+            const count = Math.min(geometry.index.count, geometry.drawRange.count);
+            const offset = geometry.drawRange.start;
+            const type = geometry.index.data instanceof Uint32Array ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT;
+            
+            gl.drawElementsInstanced(gl.TRIANGLES, count, type, offset * (type === gl.UNSIGNED_INT ? 4 : 2), instanceCount);
+        } else {
+            const position = geometry.attributes.get('position');
+            if (position) {
+                const count = Math.min(position.count, geometry.drawRange.count);
+                const offset = geometry.drawRange.start;
+                gl.drawArraysInstanced(gl.TRIANGLES, offset, count, instanceCount);
+            }
+        }
+        
+        geometry._needsUpload = false;
     }
 }

@@ -21,10 +21,12 @@ export class Material {
         this.depthTest = options.depthTest !== false;
         this.depthWrite = options.depthWrite !== false;
         this.blending = options.blending || 'normal';
+        this.bindGroupLayoutSpec = options.bindGroupLayoutSpec || null;
         
         this._gpuProgram = null;
         this._uniformLocations = null;
         this._needsCompile = true;
+        this.bindGroupLayoutSpec = options.bindGroupLayoutSpec || null;
         
         console.log(`Material created: "${this.name}" (ID: ${this.id})`);
     }

@@ -7,6 +7,7 @@ import { Material } from '../renderer/resources/material.js';
 import { terrainVertexShader, terrainFragmentShader } from './shaders/webgl2/terrainCompute.glsl.js';
 import { splatVertexShader, splatFragmentShader } from './shaders/webgl2/splatCompute.glsl.js';
 import { BASE_FEATURE_DISTRIBUTION } from './shaders/featureDistribution.js';
+import { StreamedAssetConfig } from '../mesh/streamed/streamedAssetConfig.js';
 import { TILE_TYPES } from '../types.js';
 
 export class WebGL2TerrainGenerator {
@@ -577,38 +578,20 @@ export class WebGL2TerrainGenerator {
     }
 
     generateFeatureDistributionForChunk(chunkX, chunkZ, tiles) {
-        const distribution = {};
+        const featureMix = {};
+        const totalTiles = tiles.length || 1;
 
-        for (const [typeName, config] of this.streamedTypes.entries()) {
-            const maxDensity = config.maxDensity || 32;
-            const baseDensity = config.prob || 0.5;
-            const density = Math.sqrt(baseDensity * maxDensity) / this.chunkSize;
-            const positions = [];
-            const gridSize = this.chunkSize;
-
-            for (let i = 0; i < gridSize * density; i++) {
-                for (let j = 0; j < gridSize * density; j++) {
-                    const x = i / density + Math.random();
-                    const z = j / density + Math.random();
-
-                    const tileX = Math.floor(x);
-                    const tileZ = Math.floor(z);
-
-                    if (tileX >= gridSize || tileZ >= gridSize) continue;
-
-                    const tileIdx = tileZ * gridSize + tileX;
-                    const tileType = tiles[tileIdx];
-
-                    if (!config.validTiles.includes(tileType)) continue;
-
-                    positions.push({ x, z });
-                }
+        for (const asset of StreamedAssetConfig) {
+            const typeName = asset.typeName.toLowerCase();
+            const valid = asset.config.validTiles || [];
+            let matches = 0;
+            for (let i = 0; i < tiles.length; i++) {
+                if (valid.includes(tiles[i])) matches++;
             }
-
-            distribution[config.name] = positions;
+            featureMix[typeName] = matches / totalTiles;
         }
 
-        return { featureMix: {}, ...distribution };
+        return { featureMix };
     }
     
     dispose() {

@@ -36,6 +36,7 @@ export class EnvironmentState {
         this.skyTopColor = new THREE.Color(0x0077ff);
         this.skyBottomColor = new THREE.Color(0xffffff);
         this.weatherMultiplier = 1.0;
+        this.humidity = 0.5;
         
         this.nextThunderTime = Date.now();
         this._rnd = Math.random;
@@ -257,13 +258,14 @@ export class EnvironmentState {
         localUp.normalize();
 
         // Daylight factor based on sun above local horizon
-        const daylight = Math.max(localUp.dot(sunDir), 0);
-        const night = 1 - daylight;
+        const daylightRaw = Math.max(localUp.dot(sunDir), 0);
+        const daylight = Math.max(daylightRaw, 0.18); // keep a minimum so scenes aren’t pitch black
+        const night = 1 - daylightRaw;
 
-        // Base intensities and colors
-        let sunIntensity = daylight * 2.5;
-        let moonIntensity = night * 0.25;
-        let ambientIntensity = 0.12 + daylight * 0.5 + night * 0.08;
+        // Base intensities and colors (slightly boosted baseline)
+        let sunIntensity = daylight * 2.8;
+        let moonIntensity = night * 0.3;
+        let ambientIntensity = 0.18 + daylight * 0.55 + night * 0.1;
 
         this.sunLightColor.setHSL(
             0.12,
@@ -295,6 +297,11 @@ export class EnvironmentState {
             moonIntensity *= snowDimming;
             ambientIntensity *= 1 + (this.weatherIntensity * 0.15);
         }
+
+        // Humidity and cloud cover reduce direct light slightly and raise ambient haze
+        const humidityDimming = 1 - Math.min(0.4, this.humidity * 0.4 + this.weatherMultiplier * 0.2);
+        sunIntensity *= humidityDimming;
+        ambientIntensity *= 1 + this.humidity * 0.15;
         
         this.sunLightIntensity = sunIntensity;
         this.moonLightIntensity = moonIntensity;

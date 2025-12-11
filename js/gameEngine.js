@@ -102,6 +102,9 @@ export class GameEngine {
         this.textureCache = new TextureCache();
         window.gameEngine = this;
         window.debug = debugSphericalRendering;
+        this._fps = 0;
+        this._fpsFrames = 0;
+        this._fpsLastSample = performance.now();
     }
 
     diagnoseChunkKeys() {
@@ -202,7 +205,7 @@ export class GameEngine {
         this.inputManager = new GameInputManager(this.canvas);
         this.gameTime = new GameTime();
     
-        const useWebGPU = false;
+        const useWebGPU = true;
         const backendType = useWebGPU ? 'webgpu' : 'webgl2';
     
         this.renderer = new Frontend(this.canvas, {
@@ -283,6 +286,11 @@ console.log('=== TextureAtlasKey tests complete ===\n');
         }
     
         await this.worldGenerator._ready;
+
+        // Share world generator with terrain mesh manager so it can request missing LOD atlases
+        if (this.renderer?.masterChunkLoader?.terrainMeshManager?.setWorldGenerator) {
+            this.renderer.masterChunkLoader.terrainMeshManager.setWorldGenerator(this.worldGenerator);
+        }
     
         this.environmentState = new EnvironmentState(this.gameTime, this.planetConfig);
     
@@ -425,6 +433,13 @@ console.log('========== RENDER DIAGNOSTIC END ==========');
 update(deltaTime) {
     if (!this.isGameActive) return;
     deltaTime = Math.min(deltaTime, 0.1);
+    this._fpsFrames++;
+    const nowMs = performance.now();
+    if (nowMs - this._fpsLastSample >= 500) {
+        this._fps = (this._fpsFrames * 1000) / (nowMs - this._fpsLastSample);
+        this._fpsFrames = 0;
+        this._fpsLastSample = nowMs;
+    }
     this.gameTime.update();
 
     const cameraRenderPos = new THREE.Vector3(
@@ -588,6 +603,11 @@ getTerrainHeightAt(gameX, gameY, gameZ = null) {
     
         const shipState = this.spaceship.getState();
         const zoneInfo = this.altitudeZoneManager?.getDebugInfo();
+        const fpsInfo = `
+            <div style="font-size: 11px; color: #0ff; margin-bottom: 6px;">
+                FPS: ${this._fps.toFixed(1)}
+            </div>
+        `;
     
         const controlsInfo = this.cameraMode === 'follow' ? `
             <div style="color: #00ff00; font-size: 12px;">
@@ -633,7 +653,7 @@ getTerrainHeightAt(gameX, gameY, gameZ = null) {
             </div>
         ` : '';
     
-        this.uiElement.innerHTML = controlsInfo + flightInfo + altitudeInfo;
+        this.uiElement.innerHTML = fpsInfo + controlsInfo + flightInfo + altitudeInfo;
     }
     showCrashScreen() {
         if (this.crashScreen) {
@@ -681,7 +701,7 @@ getTerrainHeightAt(gameX, gameY, gameZ = null) {
         return {
             spaceship: this.spaceship.getState(),
             chunks: this.chunkManager.getStats(),
-            fps: 0
+            fps: this._fps
         };
     }
 }

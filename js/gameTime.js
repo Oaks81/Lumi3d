@@ -5,7 +5,7 @@ export class GameTime {
         this.dayDurationMs = 1 * 60 * 1000; // 24 minutes real time = 1 game day
         this.startDay = 190;
         this.currentDay = this.startDay;
-        const startHour = 16; // 9 AM
+        const startHour = 12; // Start near noon for brighter initial lighting
     
         const offsetMs = (startHour / 24) * this.dayDurationMs;
         this.dayStartTime = Date.now() - offsetMs;

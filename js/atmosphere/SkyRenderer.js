@@ -32,7 +32,43 @@ export class SkyRenderer {
     }
 
     async _initializeWebGPU() {
-        this.shaderCode = this._getSkyShaderWGSL();
+        this.vertexWGSL = this._getSkyVertexWGSL();
+        this.fragmentWGSL = this._getSkyFragmentWGSL();
+        this.fullscreenGeometry = this._createFullscreenTriangle();
+        this.skyMaterial = new Material({
+            name: 'SkyRenderer_WebGPU',
+            vertexShader: this.vertexWGSL,
+            fragmentShader: this.fragmentWGSL,
+            bindGroupLayoutSpec: [
+                {
+                    label: 'SkyUniforms',
+                    entries: [
+                        { binding: 0, visibility: 'vertex|fragment', buffer: { type: 'uniform' }, name: 'skyUniforms' },
+                        { binding: 1, visibility: 'fragment', buffer: { type: 'uniform' }, name: 'invViewProj' }
+                    ]
+                },
+                {
+                    label: 'Transmittance',
+                    entries: [
+                        { binding: 0, visibility: 'fragment', texture: { sampleType: 'float' }, name: 'transmittanceLUT' },
+                        { binding: 1, visibility: 'fragment', sampler: { type: 'filtering' }, name: 'transmittanceSampler' }
+                    ]
+                }
+            ],
+            uniforms: {
+                skyUniforms: { value: new Float32Array(24) },
+                invViewProj: { value: new Float32Array(16) },
+                transmittanceLUT: { value: this.atmosphereLUT?.transmittanceLUT || null },
+                transmittanceSampler: { value: 'linear' }
+            },
+            vertexLayout: [], // vertex_index based fullscreen triangle
+            depthTest: true,   // ensure pipeline matches render pass depth attachment
+            depthWrite: false,
+            side: 'double'
+        });
+        if (this.backend.compileShader) {
+            this.backend.compileShader(this.skyMaterial);
+        }
     }
 
     async _initializeWebGL2() {
@@ -58,6 +94,7 @@ export class SkyRenderer {
                 mieScattering: { value: 21e-5 },
                 sunIntensity: { value: 20.0 },
                 numSamples: { value: this.numSamples },
+                hasLUT: { value: 0.0 },
                 invViewProjMatrix: { value: new THREE.Matrix4() },
                 transmittanceLUT: { value: this.atmosphereLUT?.transmittanceLUT || null },
             },
@@ -73,7 +110,6 @@ export class SkyRenderer {
 
     render(camera, atmosphereSettings, sunDir, uniformManager) {
         if (!this.enabled || !this.initialized) return;
-        if (!this.atmosphereLUT?.transmittanceLUT) return;
 
         const apiName = this.backend.getAPIName?.() || 'webgl2';
 
@@ -85,8 +121,67 @@ export class SkyRenderer {
     }
 
     _renderWebGPU(camera, atmosphereSettings, sunDir, uniformManager) {
-        // WebGPU sky rendering would be implemented here
-        // For now, this is a placeholder for the WebGPU backend integration
+        if (!this.skyMaterial || !this.fullscreenGeometry) return;
+        // If LUT not ready, render a simple gradient to avoid stalls/crashes
+        const hasLUT = !!(this.atmosphereLUT?.transmittanceLUT && this.atmosphereLUT.transmittanceLUT._gpuTexture);
+
+        const u = this.skyMaterial.uniforms.skyUniforms.value;
+        const planetCenter = uniformManager?.uniforms?.planetCenter?.value || new THREE.Vector3();
+        const planetRadius = atmosphereSettings?.planetRadius ??
+            uniformManager?.uniforms?.atmospherePlanetRadius?.value ?? 50000;
+        const atmosphereRadius = atmosphereSettings?.atmosphereRadius ??
+            uniformManager?.uniforms?.atmosphereRadius?.value ?? planetRadius + 10000;
+        const rayleigh = atmosphereSettings?.rayleighScattering ??
+            uniformManager?.uniforms?.atmosphereRayleighScattering?.value ??
+            new THREE.Vector3(5.5e-6, 13.0e-6, 22.4e-6);
+        const mieScattering = atmosphereSettings?.mieScattering ??
+            uniformManager?.uniforms?.atmosphereMieScattering?.value ?? 21e-6;
+        const mieAnisotropy = atmosphereSettings?.mieAnisotropy ??
+            uniformManager?.uniforms?.atmosphereMieAnisotropy?.value ?? 0.758;
+        const sunIntensity = atmosphereSettings?.sunIntensity ??
+            uniformManager?.uniforms?.atmosphereSunIntensity?.value ?? 20.0;
+        const scaleHeightR = atmosphereSettings?.scaleHeightRayleigh ??
+            uniformManager?.uniforms?.atmosphereScaleHeightRayleigh?.value ?? 8000;
+        const scaleHeightM = atmosphereSettings?.scaleHeightMie ??
+            uniformManager?.uniforms?.atmosphereScaleHeightMie?.value ?? 1200;
+
+        const sDir = (sunDir || uniformManager?.uniforms?.sunLightDirection?.value || new THREE.Vector3(0.5, 1.0, 0.3)).clone().normalize();
+
+        // Pack uniforms (matches SkyUniforms in WGSL)
+        u[0] = camera.position.x;
+        u[1] = camera.position.y;
+        u[2] = camera.position.z;
+        u[3] = 0; // viewerAltitude (filled below)
+        u[4] = sDir.x;
+        u[5] = sDir.y;
+        u[6] = sDir.z;
+        u[7] = 0;
+        u[8] = planetCenter.x;
+        u[9] = planetCenter.y;
+        u[10] = planetCenter.z;
+        u[11] = planetRadius;
+        u[12] = atmosphereRadius;
+        u[13] = scaleHeightR;
+        u[14] = scaleHeightM;
+        u[15] = mieAnisotropy;
+        u[16] = rayleigh.x;
+        u[17] = rayleigh.y;
+        u[18] = rayleigh.z;
+        u[19] = mieScattering;
+        u[20] = sunIntensity;
+        u[21] = this.numSamples;
+        u[22] = hasLUT ? 1.0 : 0.0;
+        u[23] = 0;
+
+        const viewProj = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+        const inv = this.skyMaterial.uniforms.invViewProj.value;
+        inv.set(viewProj.clone().invert().elements);
+
+        const viewerAlt = Math.max(0, camera.position.length() - planetRadius);
+        u[3] = viewerAlt;
+
+        this.skyMaterial.uniforms.transmittanceLUT.value = hasLUT ? this.atmosphereLUT.transmittanceLUT : null;
+        this.backend.draw(this.fullscreenGeometry, this.skyMaterial);
     }
 
     _renderWebGL2(camera, atmosphereSettings, sunDir, uniformManager) {
@@ -129,7 +224,9 @@ export class SkyRenderer {
         const baseSunIntensity = atmosphereSettings?.sunIntensity ?? global.atmosphereSunIntensity?.value ?? 20.0;
         uniforms.sunIntensity.value = baseSunIntensity * sunStrength;
 
-        uniforms.transmittanceLUT.value = this.atmosphereLUT.transmittanceLUT;
+        const hasLUT = !!(this.atmosphereLUT?.transmittanceLUT);
+        uniforms.hasLUT.value = hasLUT ? 1.0 : 0.0;
+        uniforms.transmittanceLUT.value = hasLUT ? this.atmosphereLUT.transmittanceLUT : null;
 
         const viewProj = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
         uniforms.invViewProjMatrix.value.copy(viewProj).invert();
@@ -141,7 +238,7 @@ export class SkyRenderer {
         this.backend.draw(this.fullscreenGeometry, this.skyMaterial);
     }
 
-    _getSkyShaderWGSL() {
+    _getSkyVertexWGSL() {
         return `
 struct SkyUniforms {
     cameraPosition: vec3<f32>,
@@ -157,8 +254,8 @@ struct SkyUniforms {
     rayleighScattering: vec3<f32>,
     mieScattering: f32,
     sunIntensity: f32,
-    numSamples: i32,
-    _pad1: f32,
+    numSamples: f32,
+    hasLUT: f32,
     _pad2: f32,
 }
 
@@ -168,14 +265,10 @@ struct VertexOutput {
 }
 
 @group(0) @binding(0) var<uniform> uniforms: SkyUniforms;
-@group(0) @binding(1) var invViewProjMatrix: mat4x4<f32>;
-@group(1) @binding(0) var transmittanceLUT: texture_2d<f32>;
-@group(1) @binding(1) var transmittanceSampler: sampler;
-
-const PI: f32 = 3.14159265359;
+@group(0) @binding(1) var<uniform> invViewProjMatrix: mat4x4<f32>;
 
 @vertex
-fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> VertexOutput {
+fn main(@builtin(vertex_index) vertexIndex: u32) -> VertexOutput {
     var output: VertexOutput;
     let positions = array<vec2<f32>, 3>(
         vec2<f32>(-1.0, -1.0),
@@ -187,6 +280,41 @@ fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> VertexOutput {
     output.uv = pos * 0.5 + 0.5;
     return output;
 }
+`;
+    }
+
+    _getSkyFragmentWGSL() {
+        return `
+struct SkyUniforms {
+    cameraPosition: vec3<f32>,
+    viewerAltitude: f32,
+    sunDirection: vec3<f32>,
+    _pad0: f32,
+    planetCenter: vec3<f32>,
+    planetRadius: f32,
+    atmosphereRadius: f32,
+    scaleHeightRayleigh: f32,
+    scaleHeightMie: f32,
+    mieAnisotropy: f32,
+    rayleighScattering: vec3<f32>,
+    mieScattering: f32,
+    sunIntensity: f32,
+    numSamples: f32,
+    hasLUT: f32,
+    _pad2: f32,
+}
+
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+}
+
+@group(0) @binding(0) var<uniform> uniforms: SkyUniforms;
+@group(0) @binding(1) var<uniform> invViewProjMatrix: mat4x4<f32>;
+@group(1) @binding(0) var transmittanceLUT: texture_2d<f32>;
+@group(1) @binding(1) var transmittanceSampler: sampler;
+
+const PI: f32 = 3.14159265359;
 
 fn raySphereIntersect(origin: vec3<f32>, dir: vec3<f32>, center: vec3<f32>, radius: f32) -> vec2<f32> {
     let oc = origin - center;
@@ -246,26 +374,21 @@ fn getRayDirection(uv: vec2<f32>) -> vec3<f32> {
 }
 
 @fragment
-fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+fn main(input: VertexOutput) -> @location(0) vec4<f32> {
     let rayDir = getRayDirection(input.uv);
     let rayOrigin = uniforms.cameraPosition;
 
     let planetHit = raySphereIntersect(rayOrigin, rayDir, uniforms.planetCenter, uniforms.planetRadius);
-    if (planetHit.x > 0.0) {
-        return vec4<f32>(0.0, 0.0, 0.0, 1.0);
-    }
-
     let atmoHit = raySphereIntersect(rayOrigin, rayDir, uniforms.planetCenter, uniforms.atmosphereRadius);
-    if (atmoHit.y < 0.0) {
-        return vec4<f32>(0.0, 0.0, 0.0, 1.0);
-    }
+    let atmoMask = select(0.0, 1.0, atmoHit.y >= 0.0);
+    let planetMask = select(1.0, 0.0, planetHit.x > 0.0);
 
-    let tStart = max(0.0, atmoHit.x);
-    let tEnd = atmoHit.y;
-    let marchLength = tEnd - tStart;
+    let tStart = max(0.0, atmoHit.x) * atmoMask;
+    let tEnd = atmoHit.y * atmoMask;
+    let marchLength = max(tEnd - tStart, 0.0);
 
-    let numSteps = uniforms.numSamples;
-    let stepSize = marchLength / f32(numSteps);
+    let numSteps = i32(uniforms.numSamples);
+    let stepSize = marchLength / max(uniforms.numSamples, 1.0);
 
     var inscatter = vec3<f32>(0.0);
     var transmittance = vec3<f32>(1.0);
@@ -274,12 +397,12 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let phaseR = rayleighPhase(cosTheta);
     let phaseM = miePhase(cosTheta, uniforms.mieAnisotropy);
 
-    for (var i = 0; i < numSteps; i++) {
+    for (var i: i32 = 0; i < numSteps; i++) {
         let t = tStart + (f32(i) + 0.5) * stepSize;
         let samplePos = rayOrigin + rayDir * t;
         let sampleAltitude = length(samplePos - uniforms.planetCenter) - uniforms.planetRadius;
 
-        if (sampleAltitude < 0.0) { continue; }
+        let sampleMask = select(0.0, 1.0, sampleAltitude >= 0.0);
 
         let density = getDensity(sampleAltitude);
 
@@ -291,18 +414,31 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         let scatterR = uniforms.rayleighScattering * density.x * phaseR;
         let scatterM = vec3<f32>(uniforms.mieScattering * density.y * phaseM);
 
-        let scatterContrib = (scatterR + scatterM) * sunTransmittance * sunVisibility * stepSize;
+        let scatterContrib = (scatterR + scatterM) * sunTransmittance * sunVisibility * stepSize * sampleMask;
         inscatter += transmittance * scatterContrib;
 
-        let extinctionR = uniforms.rayleighScattering * density.x;
-        let extinctionM = vec3<f32>(uniforms.mieScattering * density.y * 1.1);
+        let extinctionR = uniforms.rayleighScattering * density.x * sampleMask;
+        let extinctionM = vec3<f32>(uniforms.mieScattering * density.y * 1.1 * sampleMask);
         transmittance *= exp(-(extinctionR + extinctionM) * stepSize);
     }
 
-    var skyColor = inscatter * uniforms.sunIntensity;
+    var skyColor = inscatter * uniforms.sunIntensity * atmoMask * planetMask;
 
     let altitudeFade = smoothstep(15000.0, 50000.0, uniforms.viewerAltitude);
     skyColor *= (1.0 - altitudeFade);
+
+    // Gradient fallback to avoid flat white if LUT is missing or invalid
+    let sunAlt = clamp(uniforms.sunDirection.y * 0.5 + 0.5, 0.0, 1.0);
+    let horizonColor = mix(vec3<f32>(0.6, 0.7, 0.8), vec3<f32>(0.9, 0.6, 0.3), 1.0 - sunAlt);
+    let zenithColor = mix(vec3<f32>(0.15, 0.25, 0.6), vec3<f32>(0.4, 0.5, 0.7), sunAlt);
+    let gradT = pow(clamp(1.0 - input.uv.y, 0.0, 1.0), 2.0);
+    let gradientSky = mix(zenithColor, horizonColor, gradT);
+
+    // Always keep a gradient floor so the sky is never flat white
+    skyColor = max(skyColor, gradientSky * (sunAlt + 0.25));
+
+    // Simple tonemap to prevent blowout
+    skyColor = skyColor / (skyColor + vec3<f32>(1.0));
 
     return vec4<f32>(skyColor, 1.0);
 }
@@ -349,6 +485,7 @@ uniform float mieScattering;
 uniform float sunIntensity;
 uniform int numSamples;
 uniform mat4 invViewProjMatrix;
+uniform float hasLUT;
 
 uniform sampler2D transmittanceLUT;
 
@@ -471,6 +608,19 @@ void main() {
 
     float altitudeFade = smoothstep(15000.0, 50000.0, viewerAltitude);
     skyColor *= (1.0 - altitudeFade);
+
+    // Add a simple atmospheric gradient to keep daytime visibly blue or as fallback
+    float sunAlt = clamp(sunDirection.y * 0.5 + 0.5, 0.0, 1.0);
+    vec3 horizonColor = mix(vec3(0.6, 0.7, 0.8), vec3(0.9, 0.6, 0.3), 1.0 - sunAlt);
+    vec3 zenithColor = mix(vec3(0.15, 0.25, 0.6), vec3(0.4, 0.5, 0.7), sunAlt);
+    float gradT = pow(clamp(1.0 - vUv.y, 0.0, 1.0), 2.0);
+    vec3 gradientSky = mix(zenithColor, horizonColor, gradT);
+
+    // Always keep a gradient floor so the sky is never flat white
+    skyColor = max(skyColor, gradientSky * (sunAlt + 0.25));
+
+    // Simple tonemap to avoid blowout
+    skyColor = skyColor / (skyColor + vec3(1.0));
 
     fragColor = vec4(skyColor, 1.0);
 }

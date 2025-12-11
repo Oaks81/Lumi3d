@@ -1,12 +1,17 @@
 export function buildStreamedChunkVertexShader() {
-    return `precision highp float;
+    return `#version 300 es
+precision highp float;
 precision highp int;
 
+in vec3 position;
+
+uniform mat4 viewMatrix;
+uniform mat4 projectionMatrix;
 uniform float u_noiseSeed;
 uniform vec2 u_chunkOffset;
 uniform float u_chunkSize;
 uniform float u_gridSpacing;
-uniform int u_instancesPerRow;
+uniform float u_instancesPerRow;
 
 uniform float u_maxDistance;
 uniform float u_taperStartDistance;
@@ -23,15 +28,15 @@ uniform sampler2D u_tileTypeTexture;
 uniform float u_time;
 uniform float u_windStrength;
 
-
-varying vec3 v_worldPos;
-varying vec2 vUv;
-varying float v_alpha;
-varying vec3 v_viewPos;
+out vec3 v_worldPos;
+out vec2 vUv;
+out float v_alpha;
+out vec3 v_viewPos;
 
 float hash(float x, float y, float seed) {
     return fract(sin(dot(vec3(x, y, seed), vec3(12.9898, 78.233, 45.164))) * 43758.5453);
 }
+
 float smoothTaper(float distance, float start, float end) {
     if (distance < start) return 1.0;
     if (distance > end) return 0.0;
@@ -50,8 +55,8 @@ bool isCulledByFrustum(vec3 worldPos, float radius) {
 
 void main() {
     int instanceID = gl_InstanceID;
-    int gridX = instanceID % u_instancesPerRow;
-    int gridZ = instanceID / u_instancesPerRow;
+    int gridX = instanceID % int(u_instancesPerRow);
+    int gridZ = instanceID / int(u_instancesPerRow);
     
     float fGridX = float(gridX);
     float fGridZ = float(gridZ);
@@ -67,14 +72,14 @@ void main() {
     vec2 cameraXZ = u_cameraPosition.xz;
     float distanceToCamera = distance(worldXZ, cameraXZ);
     
-   float randomOffset = hash(fGridX, fGridZ, 0.5 + u_noiseSeed) * 3.0;
+    float randomOffset = hash(fGridX, fGridZ, 0.5 + u_noiseSeed) * 3.0;
 
     if (distanceToCamera > u_maxDistance + randomOffset) {
         gl_Position = vec4(2.0, 2.0, 2.0, 0.0);
         return;
     }
     
-float cullMargin = u_gridSpacing * 1.5;
+    float cullMargin = u_gridSpacing * 1.5;
     float cullDistance = u_maxDistance + hash(fGridX, fGridZ, 0.5 + u_noiseSeed) * cullMargin;
 
     if (distanceToCamera > cullDistance) {
@@ -100,7 +105,7 @@ float cullMargin = u_gridSpacing * 1.5;
     vec2 localXZ = worldXZ - u_chunkOffset;
     vec2 texUv = clamp(localXZ / u_chunkSize, 0.001, 0.999);
     
-    float terrainHeight = texture2D(u_heightTexture, texUv).r;
+    float terrainHeight = texture(u_heightTexture, texUv).r;
     
     if (terrainHeight <= u_waterLevel + 0.1) {
         gl_Position = vec4(2.0, 2.0, 2.0, 0.0);
@@ -114,7 +119,7 @@ float cullMargin = u_gridSpacing * 1.5;
         return;
     }
     
-float rotation = hash(fGridX, fGridZ, 0.4 + u_noiseSeed) * 6.2831853;
+    float rotation = hash(fGridX, fGridZ, 0.4 + u_noiseSeed) * 6.2831853;
     float c = cos(rotation);
     float s = sin(rotation);
     
@@ -143,7 +148,6 @@ float rotation = hash(fGridX, fGridZ, 0.4 + u_noiseSeed) * 6.2831853;
     vec4 viewPos = viewMatrix * vec4(worldPos, 1.0);
     gl_Position = projectionMatrix * viewPos;
     
-    // Pass to fragment shader
     v_worldPos = worldPos;
     v_viewPos = viewPos.xyz;
     vUv = localPos.xz;

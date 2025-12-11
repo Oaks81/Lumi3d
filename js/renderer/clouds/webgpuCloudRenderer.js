@@ -30,10 +30,12 @@ export class WebGPUCloudRenderer extends CloudRenderer {
                 matrixUniforms: { value: new Float32Array(32) },
                 cloudParams: { value: new Float32Array(32) },
                 froxelTexture: { value: this.froxelGrid.getTexture() },
-                froxelSampler: { value: 'linear' }
+                froxelSampler: { value: 'linear' },
+                cloudBaseColor: { value: new Float32Array([0.9, 0.95, 1.0, 1.0]) }
             },
             transparent: true,
-            depthTest: false,
+            // Keep depth test on so the pipeline matches the render pass depth attachment
+            depthTest: true,
             depthWrite: false,
             side: 'double'
         });
@@ -83,6 +85,10 @@ export class WebGPUCloudRenderer extends CloudRenderer {
         p[17] = common.cloudHighCoverage;
         p[18] = common.cloudAnisotropy;
         p[19] = 0;
+        p[20] = 0.92; // cloud tint r
+        p[21] = 0.96; // cloud tint g
+        p[22] = 1.0;  // cloud tint b
+        p[23] = 1.0;
     }
 
     _getVertexShader() {
@@ -90,6 +96,10 @@ export class WebGPUCloudRenderer extends CloudRenderer {
 struct MatrixUniforms {
     viewMatrix : mat4x4<f32>,
     invViewProjMatrix : mat4x4<f32>,
+};
+
+struct VertexInput {
+    @location(0) position : vec3<f32>,
 };
 
 struct VertexOutput {
@@ -100,16 +110,10 @@ struct VertexOutput {
 @group(0) @binding(0) var<uniform> matrices : MatrixUniforms;
 
 @vertex
-fn main(@builtin(vertex_index) vertexIndex : u32) -> VertexOutput {
+fn main(input : VertexInput) -> VertexOutput {
     var output : VertexOutput;
-    let positions = array<vec2<f32>, 3>(
-        vec2<f32>(-1.0, -1.0),
-        vec2<f32>(3.0, -1.0),
-        vec2<f32>(-1.0, 3.0)
-    );
-    let pos = positions[vertexIndex];
-    output.position = vec4<f32>(pos, 0.9999, 1.0);
-    output.uv = pos * 0.5 + 0.5;
+    output.position = vec4<f32>(input.position.xy, 0.9999, 1.0);
+    output.uv = input.position.xy * 0.5 + 0.5;
     return output;
 }`;
     }
@@ -133,7 +137,8 @@ struct CloudParams {
     cloudLow : f32,
     cloudHigh : f32,
     cloudAnisotropy : f32,
-    _pad0 : f32
+    _pad0 : f32,
+    cloudTint : vec4<f32>
 };
 
 struct VertexOutput {
@@ -145,6 +150,8 @@ struct VertexOutput {
 @group(0) @binding(1) var<uniform> params : CloudParams;
 @group(1) @binding(0) var froxelTexture : texture_2d<f32>;
 @group(1) @binding(1) var froxelSampler : sampler;
+
+// Packed tint in params.cloudTint
 
 const PI : f32 = 3.14159265359;
 
@@ -201,13 +208,11 @@ fn main(input : VertexOutput) -> @location(0) vec4<f32> {
         let cldLow = cell.g * params.cloudLow;
         let cldHigh = cell.b * params.cloudHigh;
         let density = fog + cldLow + cldHigh;
-        if (density > 0.00001) {
-            let phase = mix(fogPhase, cloudPhase, clamp(cldLow + cldHigh, 0.0, 1.0));
-            let scatter = vec3<f32>(density * phase) * (0.65 + 0.6 * cell.a);
-            accum += trans * scatter * stepSize;
-            trans *= exp(-density * stepSize * 1.25);
-            if (trans < 0.02) { break; }
-        }
+        let mask = select(0.0, 1.0, density > 0.00001);
+        let phase = mix(fogPhase, cloudPhase, clamp(cldLow + cldHigh, 0.0, 1.0));
+        let scatter = vec3<f32>(density * phase) * (0.65 + 0.6 * cell.a) * params.cloudTint.rgb * mask;
+        accum += trans * scatter * stepSize;
+        trans *= exp(-density * stepSize * 1.25 * mask);
     }
 
     let alpha = clamp(1.0 - trans, 0.0, 1.0);

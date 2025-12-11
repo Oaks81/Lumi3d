@@ -1,5 +1,23 @@
 // js/mesh/terrain/shaders/webgpu/terrainChunkVertexShaderBuilder.js
-export function buildTerrainChunkVertexShader() {
+export function buildTerrainChunkVertexShader(options = {}) {
+    const instanced = options.instanced === true;
+    const instanceInputs = instanced ? `
+struct InstanceInput {
+    @location(3) instanceData0: vec4<f32>,
+    @location(4) instanceData1: vec4<f32>,
+}
+` : '';
+
+    const instanceParam = instanced ? ', instance: InstanceInput' : '';
+
+    const chunkFaceExpr = instanced ? 'i32(round(instance.instanceData0.z))' : 'uniforms.chunkFace';
+    const chunkOffsetExpr = instanced ? 'instance.instanceData0.xy' : 'uniforms.chunkOffset';
+    const chunkLocExpr = instanced
+        ? 'vec2<f32>(instance.instanceData0.w, instance.instanceData1.x)'
+        : 'uniforms.chunkLocation';
+    const atlasOffsetExpr = instanced ? 'instance.instanceData1.yz' : 'uniforms.atlasUVOffset';
+    const atlasScaleExpr = instanced ? 'instance.instanceData1.w' : 'uniforms.atlasUVScale';
+
     return `
 // Debug constants: set FORCE_HEIGHT_TEST to true to force obvious displacement
 const FORCE_HEIGHT_TEST : bool = false;
@@ -34,6 +52,7 @@ struct VertexUniforms {
     useAtlasMode: f32,
     atlasUVOffset: vec2<f32>,
     atlasUVScale: f32,
+    useInstancing: f32,
     
     // Height settings
     heightScale: f32,
@@ -47,6 +66,8 @@ struct VertexInput {
     @location(1) normal: vec3<f32>,
     @location(2) uv: vec2<f32>,
 }
+
+${instanceInputs}
 
 struct VertexOutput {
     @builtin(position) clipPosition: vec4<f32>,
@@ -79,14 +100,14 @@ fn getCubePoint(face: i32, uv: vec2<f32>) -> vec3<f32> {
 }
 
 // Sample height with proper atlas UV transform
-fn sampleHeight(localUV: vec2<f32>) -> f32 {
+fn sampleHeight(localUV: vec2<f32>, atlasOffset: vec2<f32>, atlasScale: f32) -> f32 {
     let texSize = vec2<f32>(textureDimensions(heightTexture));
     
     // Apply atlas UV transform if in atlas mode
     var sampleUV = localUV;
     if (uniforms.useAtlasMode > 0.5) {
         // Transform from chunk-local [0,1] to atlas subregion
-        sampleUV = uniforms.atlasUVOffset + localUV * uniforms.atlasUVScale;
+        sampleUV = atlasOffset + localUV * atlasScale;
     }
     
     // Clamp to valid range with half-pixel border
@@ -117,28 +138,49 @@ fn sampleHeight(localUV: vec2<f32>) -> f32 {
 }
 
 @vertex
-fn main(input: VertexInput) -> VertexOutput {
+fn main(input: VertexInput${instanceParam}) -> VertexOutput {
     var output: VertexOutput;
 
+    // Select per-instance or uniform chunk data
+    let useInstancing = uniforms.useInstancing > 0.5;
+    var chunkFace: i32 = uniforms.chunkFace;
+    var chunkOffset: vec2<f32> = uniforms.chunkOffset;
+    var chunkLocation: vec2<f32> = uniforms.chunkLocation;
+    var atlasOffset: vec2<f32> = vec2<f32>(0.0);
+    var atlasScale: f32 = 1.0;
+    if (uniforms.useAtlasMode > 0.5) {
+        atlasOffset = uniforms.atlasUVOffset;
+        atlasScale = uniforms.atlasUVScale;
+    }
+    if (useInstancing) {
+        chunkFace = ${chunkFaceExpr};
+        chunkOffset = ${chunkOffsetExpr};
+        chunkLocation = ${chunkLocExpr};
+        if (uniforms.useAtlasMode > 0.5) {
+            atlasOffset = ${atlasOffsetExpr};
+            atlasScale = ${atlasScaleExpr};
+        }
+    }
+
     // Height sampling (with optional hard override for debugging)
-    var heightSample = sampleHeight(input.uv);
+    var heightSample = sampleHeight(input.uv, atlasOffset, atlasScale);
     // Height texture already encodes generator-scaled heights; heightScale is a render multiplier.
     var height = heightSample;
     var worldPosition: vec3<f32>;
     var normal: vec3<f32>;
     var sphereDirOut: vec3<f32> = vec3<f32>(0.0, 1.0, 0.0);
-    
+
     // Check if spherical mode (chunkFace >= 0)
-    if (uniforms.chunkFace >= 0) {
+    if (chunkFace >= 0) {
         // =============================================
         // SPHERICAL MODE
         // =============================================
         
         // Calculate face UV from chunk location + local UV
-        let faceUV = uniforms.chunkLocation + input.uv * uniforms.chunkSizeUV;
+        let faceUV = chunkLocation + input.uv * uniforms.chunkSizeUV;
         
         // Project to unit sphere
-        let cubePoint = getCubePoint(uniforms.chunkFace, faceUV);
+        let cubePoint = getCubePoint(chunkFace, faceUV);
         let sphereDir = normalize(cubePoint);
         sphereDirOut = sphereDir;
         
@@ -173,9 +215,9 @@ fn main(input: VertexInput) -> VertexOutput {
             yPos = height * FORCE_HEIGHT_MULT;
         }
         worldPosition = vec3<f32>(
-            localPos.x + uniforms.chunkOffset.x,
+            localPos.x + chunkOffset.x,
             yPos,
-            localPos.z + uniforms.chunkOffset.y
+            localPos.z + chunkOffset.y
         );
         
         normal = input.normal;
@@ -193,7 +235,7 @@ fn main(input: VertexInput) -> VertexOutput {
     // Pass through UV and computed values
     output.vUv = input.uv;
     output.vTileUv = input.uv * uniforms.chunkSize;
-    output.vWorldPos = uniforms.chunkOffset + input.uv * uniforms.chunkSize;
+    output.vWorldPos = chunkOffset + input.uv * uniforms.chunkSize;
     output.vNormal = normal;
     output.vSphereDir = sphereDirOut;
     output.vHeight = height;

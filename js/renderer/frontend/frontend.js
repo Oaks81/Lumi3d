@@ -2,7 +2,7 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.178.0/build/three.module.js';
 import { WebGL2Backend } from '../backend/webGL2Backend.js';
 import { WebGPUBackend } from '../backend/webgpuBackend.js';
-import { MasterChunkLoader } from '../../mesh/masterChunkLoader.js'; 
+import { MasterChunkLoader } from '../../mesh/masterChunkLoader.js';
 import { LODManager } from '../lodManager.js';
 import { ChunkCullingManager } from '../chunkCullingManager.js';
 import { UniformManager } from '../../lighting/uniformManager.js';
@@ -13,11 +13,9 @@ import { OrbitalSphereRenderer } from '../orbitalSphereRenderer.js';
 import { GenericMeshRenderer } from '../genericMeshRenderer.js';
 import { Geometry } from '../resources/geometry.js';
 import { Material } from '../resources/material.js';
- 
+
 export class Frontend {
     constructor(canvas, options = {}) {
-          
-
         this.canvas = canvas;
         this.backend = null;
         this.backendType = options.backendType || 'webgl2';
@@ -63,16 +61,10 @@ export class Frontend {
         this.sphericalMapper = null;
         this.orbitalSphereRenderer = null;
         this.cloudRenderer = null;
-        
     }
 
-    /**
-     * Debug helper: create a small instanced grid to validate instancing path.
-     * Enable by calling frontend.enableInstancedDebug().
-     */
     _setupInstancedDebug() {
         this._instancedTest = null;
-        // Disabled by default; call enableInstancedDebug() to activate
     }
 
     enableInstancedDebug() {
@@ -186,12 +178,10 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
         return this.backendType;
     }
 
-    // Expose loaded chunks through MasterChunkLoader
     get loadedChunks() {
         return this.masterChunkLoader?.loadedChunks || new Map();
     }
 
-    // Expose terrainMeshManager through MasterChunkLoader
     get terrainMeshManager() {
         return this.masterChunkLoader?.terrainMeshManager || null;
     }
@@ -200,96 +190,80 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
         if (gameState.camera) {
             const camPos = gameState.camera.position;
             const camTarget = gameState.camera.target;
-    
+
             if (camPos.isVector3) {
                 this.camera.position.copy(camPos);
             } else {
-                this.camera.position.set(camPos.x, camPos.y, camPos.z); 
+                this.camera.position.set(camPos.x, camPos.y, camPos.z);
             }
-    
+
             if (camTarget.isVector3) {
                 this.camera.target.copy(camTarget);
             } else {
                 this.camera.target.set(camTarget.x, camTarget.y, camTarget.z);
             }
-    
+
             this._updateCameraMatrices();
         }
-    
+
         this.uniformManager.updateCameraParameters(this.camera);
     }
 
     _updateCameraMatrices() {
         const position = this.camera.position;
         const target = this.camera.target;
-    
-        // 1. Calculate View Direction (Z-Axis)
+
         const zAxis = new THREE.Vector3().subVectors(position, target).normalize();
-        
-        // 2. Calculate "Up" Vector
-        // For a planet, "Up" is the direction from the planet center to the camera.
-        // Assuming planet is at (0,0,0)
         let up = new THREE.Vector3().copy(position).normalize();
-        
-        // EDGE CASE: If camera is at (0,0,0) (impossible) or math fails, fallback
+
         if (up.lengthSq() < 0.0001) up.set(0, 1, 0);
 
-        // SINGULARITY CHECK:
-        // If View Dir (zAxis) and Up Vector are parallel (looking straight down),
-        // we can't derive "Right" (xAxis). We must arbitrarily choose a different "Up".
-        // This usually happens at the poles.
         const dot = Math.abs(zAxis.dot(up));
         if (dot > 0.99) {
-            // Camera is looking straight down/up relative to gravity.
-            // Perturb 'up' slightly to Z-axis to get a valid cross product.
-            up.set(0, 0, 1); 
+            up.set(0, 0, 1);
         }
-    
-        // 3. Calculate Right Vector (X-Axis)
+
         const xAxis = new THREE.Vector3().crossVectors(up, zAxis).normalize();
-        
-        // 4. Recalculate True Up Vector (Y-Axis) to ensure orthogonality
         const yAxis = new THREE.Vector3().crossVectors(zAxis, xAxis);
-    
+
         const te = this.camera.matrixWorldInverse.elements;
-    
-        // Fill Matrix
+
         te[0] = xAxis.x; te[4] = xAxis.y; te[8] = xAxis.z;
         te[1] = yAxis.x; te[5] = yAxis.y; te[9] = yAxis.z;
         te[2] = zAxis.x; te[6] = zAxis.y; te[10] = zAxis.z;
-    
+
         te[12] = -xAxis.dot(position);
         te[13] = -yAxis.dot(position);
         te[14] = -zAxis.dot(position);
-    
+
         te[3] = 0; te[7] = 0; te[11] = 0; te[15] = 1;
-    
+
         const fov = this.camera.fov * Math.PI / 180;
         const aspect = this.camera.aspect;
         const near = this.camera.near;
         const far = this.camera.far;
-    
+
         const top = near * Math.tan(fov / 2);
         const height = 2 * top;
         const width = aspect * height;
-    
+
         const pe = this.camera.projectionMatrix.elements;
-    
+
         pe[0] = 2 * near / width;
         pe[4] = 0;
         pe[8] = 0;
         pe[12] = 0;
-    
+
         pe[1] = 0;
         pe[5] = 2 * near / height;
         pe[9] = 0;
         pe[13] = 0;
-    
+
         pe[2] = 0;
         pe[6] = 0;
         pe[10] = -(far + near) / (far - near);
         pe[14] = -2 * far * near / (far - near);
-    
+
         pe[3] = 0;
         pe[7] = 0;
         pe[11] = -1;
@@ -299,42 +273,40 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
             this.uniformManager.updateCameraParameters(this.camera);
         }
     }
+
     async initializeChunkLoader() {
         if (!this.textureManager) {
             throw new Error('Cannot initialize chunk loader: textureManager not set');
         }
-    
+
         console.log('Initializing MasterChunkLoader with textureManager...');
-    
-       
+
         this.masterChunkLoader = new MasterChunkLoader(
             this.backend,
             this.textureManager,
             this.textureCache,
             this.uniformManager,
             this.lodManager,
-            this.planetConfig?.altitudeZoneManager || null, 
+            this.planetConfig?.altitudeZoneManager || null,
             this.chunkSize,
             100
         );
-    
+
         await this.masterChunkLoader.initialize();
-    
-    // Pass atmosphere LUT if available
-    if (this.atmosphereLUT && this.masterChunkLoader.terrainMeshManager) {
-        this.masterChunkLoader.terrainMeshManager.setAtmosphereLUT(this.atmosphereLUT);
-    }
+
+        if (this.atmosphereLUT && this.masterChunkLoader.terrainMeshManager) {
+            this.masterChunkLoader.terrainMeshManager.setAtmosphereLUT(this.atmosphereLUT);
+        }
 
         console.log('MasterChunkLoader initialized successfully');
     }
-    
-    async updateChunks(gameState, environmentState, deltaTime, planetConfig, sphericalMapper) {
 
+    async updateChunks(gameState, environmentState, deltaTime, planetConfig, sphericalMapper) {
         if (!this.masterChunkLoader) {
             console.warn('MasterChunkLoader not initialized yet');
             return;
         }
-    
+
         if (this.uniformManager) {
             this.uniformManager.currentEnvironmentState = environmentState;
         }
@@ -349,7 +321,6 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
 
         this.uniformManager.updateFromEnvironmentState(environmentState);
 
-        // Optionally push env uniforms to meshes if supported
         if (this.masterChunkLoader.terrainMeshManager?.updateEnvUniforms) {
             this.masterChunkLoader.terrainMeshManager.updateEnvUniforms(
                 environmentState,
@@ -359,7 +330,14 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
             );
         }
     }
+
     updateLighting(environmentState) {
+        // Push environment-driven lighting (sun/ambient/fog/etc.) into shared uniforms
+        if (environmentState) {
+            this.uniformManager.currentEnvironmentState = environmentState;
+            this.uniformManager.updateFromEnvironmentState(environmentState);
+        }
+
         this.clusterGrid.updateFromCamera(this.camera);
         this.lightManager.assignLightsToClusters(this.camera);
         const clusterTextures = this.lightManager.buildGPUBuffers();
@@ -372,7 +350,6 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
 
         this.uniformManager.updateFromLightManager(this.lightManager);
     }
-
 
     async initialize(planetConfig = null, sphericalMapper = null) {
         this.planetConfig = planetConfig;
@@ -391,17 +368,16 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
                 this.backend._pipelineCache.clear();
             }
         }
-    
+
         if (this.backendType === 'webgl2' || !this.backend) {
             this.backend = new WebGL2Backend(this.canvas);
             await this.backend.initialize();
             console.log('Frontend initialized with WebGL2 backend');
         }
-    
+
         this.backend.setViewport(0, 0, this.canvas.width, this.canvas.height);
         this.genericMeshRenderer = new GenericMeshRenderer(this.backend);
         console.log('GenericMeshRenderer initialized');
-
 
         if (this.planetConfig && this.planetConfig.hasAtmosphere) {
             this.uniformManager.updateFromPlanetConfig(this.planetConfig);
@@ -427,11 +403,12 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
             this.skyRenderer = new SkyRenderer(this.backend, this.atmosphereLUT);
             await this.skyRenderer.initialize();
         }
+
         const cloudConfig = {
-            gridDimensions: { x: 24, y: 16, z: 24 },
+            gridDimensions: { x: 16, y: 12, z: 16 },
             volumeSize: new THREE.Vector3(8000, 4000, 12000),
-            maxDistance: 12000,
-            numSteps: this.backendType === 'webgpu' ? 48 : 40,
+            maxDistance: 9000,
+            numSteps: this.backendType === 'webgpu' ? 28 : 20,
             cloudAnisotropy: 0.65
         };
         if (this.backendType === 'webgpu') {
@@ -442,6 +419,9 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
             this.cloudRenderer = new WebGL2CloudRenderer(this.backend, cloudConfig);
         }
         await this.cloudRenderer.initialize();
+        // Temporarily disable clouds to debug the white sky; re-enable after sky is verified.
+        this.cloudRenderer.enabled = false;
+
         if (this.atmosphereLUT) {
             const { AerialPerspectiveTest } = await import('../atmosphere/aerialPerspectiveTest.js');
             this.aerialTest = new AerialPerspectiveTest(
@@ -452,19 +432,19 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
             await this.aerialTest.initialize();
         }
 
-        this._setupInstancedDebug(); // Safe no-op if disabled
+        this._setupInstancedDebug();
         this.clusterGrid = new ClusterGrid({
             gridSizeX: 16,
             gridSizeY: 8,
             gridSizeZ: 24,
             useLogarithmicDepth: true
         });
-    
+
         this.lightManager = new ClusteredLightManager(this.clusterGrid, {
             maxLightsPerCluster: 32,
             maxLightIndices: 8192
         });
-    
+
         this.shadowRenderer = new CascadedShadowMapRenderer(this.backend, {
             numCascades: 3,
             shadowMapSize: 2048,
@@ -472,7 +452,7 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
             shadowBias: 0.001,
             shadowNormalBias: 0.1
         });
-    
+
         this.uniformManager.uniforms.ambientLightIntensity.value = 0.5;
         this.uniformManager.uniforms.ambientLightColor.value.set(0xffffff);
         this.uniformManager.uniforms.skyAmbientColor.value.set(0x87ceeb);
@@ -488,9 +468,9 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
                 this.backend,
                 this.planetConfig
             );
-   
-    this.camera.far = this.planetConfig.radius * 3;  // 150000 for radius 50000
-    this.camera.near = 1.0;  // Increase near plane too for depth precision
+
+            this.camera.far = this.planetConfig.radius * 3;
+            this.camera.near = 1.0;
 
             await this.orbitalSphereRenderer.initialize();
             console.log('OrbitalSphereRenderer initialized');
@@ -498,10 +478,10 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
             console.log('Skipping OrbitalSphereRenderer (flat terrain mode)');
             this.orbitalSphereRenderer = null;
         }
-        
+
         return this;
     }
-    
+
     async updateShadows(environmentState) {
         return;
         if (!this.shadowRenderer) return;
@@ -516,7 +496,6 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
         this.uniformManager.updateFromShadowRenderer(shadowData);
     }
 
-
     async render(gameState, environmentState, deltaTime, planetConfig, sphericalMapper) {
         if (!this.textureManager?.loaded || !gameState.terrain) return;
 
@@ -529,19 +508,19 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
         }
 
         this.frameCount++;
-    
+
         this.updateCamera(gameState);
         if (this.planetConfig && this.uniformManager.currentPlanetConfig !== this.planetConfig) {
             this.uniformManager.updateFromPlanetConfig(this.planetConfig);
         }
-        
+
         await this.updateChunks(gameState, environmentState, deltaTime, planetConfig, sphericalMapper);
         this.updateLighting(environmentState);
-    
+
         if (this.frameCount % 2 === 0) {
             await this.updateShadows(environmentState);
         }
-    
+
         this.backend.setRenderTarget(null);
         this.backend.setClearColor(0.0, 0.0, 0.0, 1.0);
         this.backend.clear(true, true, false);
@@ -557,7 +536,7 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
             );
         }
 
-        if (this.cloudRenderer) {
+        if (this.cloudRenderer && this.cloudRenderer.enabled) {
             this.cloudRenderer.update(this.camera, environmentState, this.uniformManager, deltaTime || 0, this.frameCount);
             this.cloudRenderer.render(this.camera, environmentState, this.uniformManager);
         }
@@ -570,16 +549,16 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
             );
             this.orbitalSphereRenderer.render();
         }
-    
+
         this.renderTerrain();
+        this.renderStreamedFeatures();
         this.renderGenericMeshes();
         if (this.aerialTest) {
            // this.aerialTest.render();
         }
         if (this.backendType === 'webgpu') {
             this.backend.submitCommands();
-            
-            // Check for validation errors
+
             const error = await this.backend.device.popErrorScope();
             if (error) {
                 console.error('WebGPU validation error:', error.message);
@@ -588,7 +567,6 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
     }
 
     renderGenericMeshes() {
-        // Optional instanced debug draw
         if (this._instancedTest) {
             const { geometry, material } = this._instancedTest;
             material.uniforms.viewMatrix.value.copy(this.camera.matrixWorldInverse);
@@ -597,24 +575,25 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
         }
 
         if (!this.genericMeshRenderer) return;
-        
+
         const viewMatrix = this.camera.matrixWorldInverse;
         const projectionMatrix = this.camera.projectionMatrix;
-        
+
         this.genericMeshRenderer.render(viewMatrix, projectionMatrix);
     }
-    
+
     renderTerrain() {
         const viewMatrix = this.camera.matrixWorldInverse;
         const projectionMatrix = this.camera.projectionMatrix;
-    
+
         const terrainMeshManager = this.masterChunkLoader.terrainMeshManager;
+        const instancingEnabled = terrainMeshManager?.useInstancing && this.backendType === 'webgpu';
 
         if (this.frameCount === 1) {
             console.log(' renderTerrain() called');
             console.log('  Camera position:', this.camera.position);
             console.log('  Mesh count:', terrainMeshManager.chunkMeshes.size);
-            
+
             for (const [key, entry] of terrainMeshManager.chunkMeshes) {
                 console.log(`  Chunk ${key}:`, {
                     visible: entry.visible,
@@ -627,57 +606,123 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
         }
         let drawnCount = 0;
         let skippedCount = 0;
-    
-        for (const [chunkKey, meshEntry] of terrainMeshManager.chunkMeshes) {
-            if (!meshEntry) {
-                console.warn(' Null mesh entry for', chunkKey);
-                skippedCount++;
-                continue;
-            }
-    
-            if (!meshEntry.visible) {
-                skippedCount++;
-                continue;
-            }
-    
-            if (!meshEntry.geometry) {
-                console.error(' Missing geometry for', chunkKey);
-                skippedCount++;
-                continue;
-            }
-    
-            if (!meshEntry.material) {
-                console.error('Missing material for', chunkKey);
-                skippedCount++;
-                continue;
-            }
-    
-            // Update matrices
-            if (!meshEntry.material.uniforms.viewMatrix) {
-                meshEntry.material.uniforms.viewMatrix = { value: new THREE.Matrix4() };
-            }
-            if (!meshEntry.material.uniforms.projectionMatrix) {
-                meshEntry.material.uniforms.projectionMatrix = { value: new THREE.Matrix4() };
-            }
-            if (!meshEntry.material.uniforms.modelMatrix) {
-                meshEntry.material.uniforms.modelMatrix = { value: new THREE.Matrix4() };
-            }
-            if (meshEntry.material.uniforms.cameraPosition) {
-                meshEntry.material.uniforms.cameraPosition.value.copy(this.camera.position);
-            }
-    
-            meshEntry.material.uniforms.viewMatrix.value.copy(viewMatrix);
-            meshEntry.material.uniforms.projectionMatrix.value.copy(projectionMatrix);
-            meshEntry.material.uniforms.modelMatrix.value.identity();  
 
-            try {
-                this.backend.draw(meshEntry.geometry, meshEntry.material);
-                drawnCount++;
-            } catch (error) {
-                console.error(' Draw error for', chunkKey, error);
+        if (instancingEnabled) {
+            const groups = new Map();
+            for (const [chunkKey, meshEntry] of terrainMeshManager.chunkMeshes) {
+                if (!meshEntry || !meshEntry.visible || !meshEntry.geometry || !meshEntry.material) {
+                    skippedCount++;
+                    continue;
+                }
+                const atlasKey = meshEntry.atlasKey || 'none';
+                const edgeMask = meshEntry.edgeMask || 0;
+                const groupKey = `${meshEntry.lodLevel}|${atlasKey}|${edgeMask}|${meshEntry.material.id}`;
+                if (!groups.has(groupKey)) groups.set(groupKey, []);
+                groups.get(groupKey).push({ key: chunkKey, entry: meshEntry });
+            }
+
+            for (const [groupKey, entries] of groups) {
+                if (!entries.length) continue;
+                const { entry } = entries[0];
+                const geo = entry.geometry;
+                const mat = entry.material;
+                const count = entries.length;
+
+                const data0 = new Float32Array(count * 4);
+                const data1 = new Float32Array(count * 4);
+
+                for (let i = 0; i < entries.length; i++) {
+                    const e = entries[i].entry;
+                    const cd = e.chunkData;
+                    const offsetIndex = i * 4;
+                    data0[offsetIndex] = cd.chunkX * cd.size;
+                    data0[offsetIndex + 1] = cd.chunkY * cd.size;
+                    data0[offsetIndex + 2] = e.faceIndex !== undefined ? e.faceIndex : -1;
+                    const faceSize = this.sphericalMapper?.chunksPerFace || 16;
+                    const chunkLocU = e.localChunkX / faceSize;
+                    const chunkLocV = e.localChunkY / faceSize;
+                    data0[offsetIndex + 3] = chunkLocU;
+
+                    data1[offsetIndex] = chunkLocV;
+                    const uv = e.uvTransform || { offsetX: 0, offsetY: 0, scale: 1 };
+                    data1[offsetIndex + 1] = uv.offsetX || 0;
+                    data1[offsetIndex + 2] = uv.offsetY || 0;
+                    data1[offsetIndex + 3] = uv.scale || 1;
+                }
+
+                geo.instanceCount = count;
+                geo.setAttribute('instanceData0', data0, 4, false, { stepMode: 'instance', slot: 3 });
+                geo.setAttribute('instanceData1', data1, 4, false, { stepMode: 'instance', slot: 4 });
+
+                if (!mat.uniforms.viewMatrix) mat.uniforms.viewMatrix = { value: new THREE.Matrix4() };
+                if (!mat.uniforms.projectionMatrix) mat.uniforms.projectionMatrix = { value: new THREE.Matrix4() };
+                if (!mat.uniforms.modelMatrix) mat.uniforms.modelMatrix = { value: new THREE.Matrix4() };
+                if (mat.uniforms.cameraPosition) mat.uniforms.cameraPosition.value.copy(this.camera.position);
+                mat.uniforms.viewMatrix.value.copy(viewMatrix);
+                mat.uniforms.projectionMatrix.value.copy(projectionMatrix);
+                mat.uniforms.modelMatrix.value.identity();
+                if (mat.uniforms.useInstancing) mat.uniforms.useInstancing.value = 1.0;
+
+                try {
+                    this.backend.draw(geo, mat);
+                    drawnCount++;
+                } catch (error) {
+                    console.error(' Draw error for instanced group', groupKey, error);
+                }
+            }
+        } else {
+            for (const [chunkKey, meshEntry] of terrainMeshManager.chunkMeshes) {
+                if (!meshEntry) {
+                    console.warn(' Null mesh entry for', chunkKey);
+                    skippedCount++;
+                    continue;
+                }
+
+                if (!meshEntry.visible) {
+                    skippedCount++;
+                    continue;
+                }
+
+                if (!meshEntry.geometry) {
+                    console.error(' Missing geometry for', chunkKey);
+                    skippedCount++;
+                    continue;
+                }
+
+                if (!meshEntry.material) {
+                    console.error('Missing material for', chunkKey);
+                    skippedCount++;
+                    continue;
+                }
+
+                if (!meshEntry.material.uniforms.viewMatrix) {
+                    meshEntry.material.uniforms.viewMatrix = { value: new THREE.Matrix4() };
+                }
+                if (!meshEntry.material.uniforms.projectionMatrix) {
+                    meshEntry.material.uniforms.projectionMatrix = { value: new THREE.Matrix4() };
+                }
+                if (!meshEntry.material.uniforms.modelMatrix) {
+                    meshEntry.material.uniforms.modelMatrix = { value: new THREE.Matrix4() };
+                }
+                if (meshEntry.material.uniforms.cameraPosition) {
+                    meshEntry.material.uniforms.cameraPosition.value.copy(this.camera.position);
+                }
+
+                meshEntry.material.uniforms.viewMatrix.value.copy(viewMatrix);
+                meshEntry.material.uniforms.projectionMatrix.value.copy(projectionMatrix);
+                meshEntry.material.uniforms.modelMatrix.value.identity();
+                if (meshEntry.material.uniforms.useInstancing) {
+                    meshEntry.material.uniforms.useInstancing.value = 0.0;
+                }
+
+                try {
+                    this.backend.draw(meshEntry.geometry, meshEntry.material);
+                    drawnCount++;
+                } catch (error) {
+                    console.error(' Draw error for', chunkKey, error);
+                }
             }
         }
-    
 
         if (this.frameCount === 1) {
             console.log(' First render:', {
@@ -688,8 +733,14 @@ fn main(@location(0) vUv : vec2<f32>) -> @location(0) vec4<f32> {
                 projectionMatrix: projectionMatrix.elements.slice(0, 4)
             });
         }
-    
+
         return drawnCount;
+    }
+
+    renderStreamedFeatures() {
+        const manager = this.masterChunkLoader?.streamedFeatureManager;
+        if (!manager) return;
+        manager.render(this.camera);
     }
 
     handleResize(width, height) {
